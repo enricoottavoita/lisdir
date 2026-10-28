@@ -877,6 +877,8 @@ mod tests {
         eprintln!("{} entries enumerated", idx.len());
         let mut probe = vec![0u8; 8192];
         for frn in [5u64, 6, 100_000] {
+            let raw = ioctl(&h, FSCTL_GET_NTFS_FILE_RECORD, &NTFS_FILE_RECORD_INPUT_BUFFER { FileReferenceNumber: frn as i64 }, probe.as_mut_ptr(), probe.len());
+            eprintln!("record {frn}: ioctl {raw:?}, header frn {:#x} len {}, starts {:?}", rd::<u64>(&probe, 0), rd::<u32>(&probe, 8), &probe[12..16]);
             let m = meta_of(&h, frn, &mut probe);
             eprintln!("record {frn}: {:?}", m.map(|m| (m.mtime, m.size)));
         }
