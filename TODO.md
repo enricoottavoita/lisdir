@@ -25,12 +25,8 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] File sizes shown in the results; changes appended to a log instead of rewriting the cache; entries in one
       flat list: a text search over 1.6 million entries takes 35–60 ms (0.14.2)
 - [x] Folder sizes (sum of their files, kept current); the portable exe updates itself in place (0.14.3)
-
-## 0.15 — actions and preview
-- [x] Action menu on a result (`Ctrl+O`, right arrow, right click) with shortcut hints in the footer
-- [x] Copy / cut a file to the clipboard (`Ctrl+C`, `Ctrl+X`), copy path, open with, open terminal here, properties
-- [x] Preview pane (`Alt+P`) that shows contents: text, images, thumbnails
-- [x] Pin files and folders so they always show up first
+- [x] Action menu with copy / cut / copy path / open with / terminal / properties; preview pane (`Alt+P`);
+      pinned results (`Ctrl+P`) (0.15)
 
 ## 0.16 — settings and control
 - [ ] Settings window: configurable hotkey (including double-tap `Ctrl`; reject plain character keys such as

@@ -23,9 +23,9 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 - **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher. Several words
   match in any order, and the matched letters are highlighted.
 - **Search syntax.** Narrow with `ext:pdf`, `date:week`, `size:>1gb`, `-draft`, `"exact phrase"`, `docs\ report`; see below.
-- **Recent items.** Open the bar and type nothing to see what you opened lately (`Del` removes one, `Shift+Del`
-  clears the list). Things you
-  open often rank a little higher, but how well the name matches always counts most.
+- **Recent items.** Open the bar and type nothing to see your pinned items, then what you opened lately (`Del`
+  removes one, `Shift+Del` clears the list). Things you open often rank a little higher, but how well the name
+  matches always counts most.
 - **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`. The
   list is refreshed when the bar opens, so new installs show up without a restart.
 - **File-type icons and sizes.** Results show the same icons as Explorer, and the size at the right: for a folder, the
@@ -88,10 +88,10 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/mft.rs` | Reads modified time and size out of a raw NTFS file record |
 | `src-tauri/src/service.rs` | Elevated helper, pipe server/client, scheduled-task install |
 | `src-tauri/src/query.rs` | The search syntax: parsing `ext:`, `date:`, quotes, `docs\`, ... |
-| `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost |
+| `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost; the same list format holds the pins |
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
-| `src-tauri/src/icons.rs` | Shell file-type icons rendered to PNG |
-| `src-tauri/src/actions.rs` | The action menu: files on the clipboard as Explorer puts them, open with, terminal, properties |
+| `src-tauri/src/icons.rs` | Shell file-type icons and preview thumbnails rendered to PNG |
+| `src-tauri/src/actions.rs` | The action menu: files on the clipboard as Explorer puts them, open with, terminal, properties; text for the preview |
 | `src-tauri/src/update.rs` | Update check against the GitHub releases; downloads and verifies the installer, or swaps in the portable exe |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
 | `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
@@ -153,6 +153,8 @@ does all of this in CI and publishes a GitHub release.
 - The first scan of a local disk reads one file record per file to collect sizes and times; that takes about 11
   seconds more per million files, once per disk (and again whenever the cache format changes).
 - There is no way yet to sort results by size or date, and `size:` does not match folders.
+- The text preview reads files as UTF-8: accented letters in older ANSI files show as `�`, and a UTF-16 file shows its icon.
+- The action menu works on one result at a time (several at once comes with the search window).
 - Not yet implemented: a settings window with a configurable hotkey, Open/Save
   dialog integration, content search.
   The plan is in [TODO.md](TODO.md).

@@ -22,7 +22,8 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Ricerca approssimata.** `rdme` trova `README.md`; inizi di parola e lettere consecutive
   valgono di più. Più parole si trovano in qualsiasi ordine e le lettere trovate sono evidenziate.
 - **Sintassi di ricerca.** Restringi con `ext:pdf`, `date:week`, `size:>1gb`, `-bozza`, `"frase esatta"`, `docs\ relazione`: vedi sotto.
-- **Elementi recenti.** Apri la barra senza scrivere per vedere cosa hai aperto di recente (`Canc` ne rimuove uno).
+- **Elementi recenti.** Apri la barra senza scrivere per vedere i preferiti fissati e poi cosa hai aperto di recente
+  (`Canc` ne rimuove uno, `Maiusc+Canc` svuota l'elenco).
   Ciò che apri spesso sale un poco, ma conta sempre di più quanto il nome corrisponde.
 - **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.
 - **Icone dei file e dimensioni.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto,
@@ -118,6 +119,8 @@ cargo build --release
 - La prima scansione di un disco locale legge un record per file per raccogliere dimensioni e date: circa 11 secondi in
   più per milione di file, una volta per disco (e di nuovo se cambia il formato della cache).
 - Non si possono ancora ordinare i risultati per dimensione o data, e `size:` non trova le cartelle.
+- L'anteprima legge il testo come UTF-8: le lettere accentate dei vecchi file ANSI appaiono come `�` e un file UTF-16 mostra la sua icona.
+- Il menu azioni agisce su un risultato alla volta (più file insieme arriveranno con la finestra di ricerca).
 - Non ancora presenti: finestra delle impostazioni con scorciatoia configurabile,
   integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 
