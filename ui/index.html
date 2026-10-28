@@ -15,7 +15,7 @@
 </style>
 <input id="q" placeholder="Search files and folders…" autofocus autocomplete="off" spellcheck="false">
 <ul id="list"></ul>
-<div id="bar"><span id="st"></span> · ↑↓ select · Enter open · Ctrl+Enter show in folder · Esc close</div>
+<div id="bar"><span id="ver" style="float:right"></span><span id="st"></span> · ↑↓ select · Enter open · Ctrl+Enter show in folder · Esc close</div>
 <script>
 const { invoke } = window.__TAURI__.core;
 const q = document.getElementById('q'), list = document.getElementById('list'), st = document.getElementById('st');
@@ -52,6 +52,7 @@ async function poll() {
   if (busy) run();
 }
 
+invoke('version').then(v => document.getElementById('ver').textContent = 'v' + v);
 q.oninput = run;
 q.onkeydown = e => {
   if (e.key === 'ArrowDown') sel = Math.min(sel + 1, hits.length - 1);

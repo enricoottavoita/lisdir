@@ -15,6 +15,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Builder as Shortcuts, ShortcutState};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 /// This process runs unelevated and only indexes network folders (it has the user's credentials and
@@ -99,6 +100,11 @@ fn open(path: String, folder: bool) {
 }
 
 #[tauri::command]
+fn version() -> &'static str {
+    VERSION
+}
+
+#[tauri::command]
 fn hide(w: WebviewWindow) {
     let _ = w.hide();
 }
@@ -177,6 +183,7 @@ fn main() {
             let menu = Menu::with_items(
                 app,
                 &[
+                    &MenuItem::with_id(app, "version", format!("lisdir {VERSION}"), false, None::<&str>)?,
                     &MenuItem::with_id(app, "open", "Open (Alt+Space)", true, None::<&str>)?,
                     &type_search,
                     &autostart,
@@ -187,7 +194,7 @@ fn main() {
             )?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("lisdir")
+                .tooltip(format!("lisdir {VERSION}"))
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, e| match e.id.as_ref() {
@@ -217,7 +224,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending])
+        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending, version])
         .run(tauri::generate_context!())
         .expect("tauri");
 }
