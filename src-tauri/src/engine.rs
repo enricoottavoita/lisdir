@@ -893,6 +893,59 @@ mod tests {
         assert!(known * 10 > idx.len() * 9, "fewer than 90% of the records could be read");
     }
 
+    /// Startup, save and search speed on the real caches in %LOCALAPPDATA%\lisdir (C: and D:), no elevation needed:
+    /// cargo test --release bench_real_cache -- --ignored --nocapture
+    /// Caches in the old LSD2 format are read without sizes; sizes are then made up so the size filter has work to do.
+    #[test]
+    #[ignore]
+    fn bench_real_cache() {
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+        let mut idx = Index::new();
+        let t = std::time::Instant::now();
+        for letter in ['C', 'D'] {
+            let Ok(b) = std::fs::read(cache_path(&format!("{letter}:"))) else { continue };
+            let (lsd3, mut off) = (&b[..4] == b"LSD3", 28);
+            for _ in 0..rd::<u64>(&b, 20) {
+                let (sz, ext) = if lsd3 { (rd::<u64>(&b, off + 24), 8) } else { (0, 0) };
+                let nlen = rd::<u16>(&b, off + 25 + ext) as usize;
+                let name = String::from_utf8_lossy(&b[off + 27 + ext..off + 27 + ext + nlen]).into_owned();
+                let frn = rd::<u64>(&b, off) | (letter as u64) << 56; // keep the two disks apart
+                let size = if lsd3 { sz } else { (frn.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) * 64 };
+                idx.insert(frn, Entry::new(rd::<u64>(&b, off + 8) | (letter as u64) << 56, name, b[off + 24 + ext] != 0, rd::<i64>(&b, off + 16)).with_size(size));
+                off += 27 + ext + nlen;
+            }
+        }
+        println!("read + build in memory: {} entries in {:.0} ms (raw files only, no cache validation)", idx.len(), ms(t.elapsed()));
+
+        let queries = ["a", "re", "rep", "report", "rapporto 2024", "ext:pdf", "date:week", "size:>100mb", r"docs\ report", "zzzqq"];
+        for qs in queries {
+            let query = q(qs);
+            let mut times = vec![];
+            let mut n = 0;
+            for _ in 0..7 {
+                let t = std::time::Instant::now();
+                n = search(&idx, &query, 20).len();
+                times.push(ms(t.elapsed()));
+            }
+            times.sort_by(f64::total_cmp);
+            println!("search {qs:<16} median {:>6.1} ms  (min {:>6.1}, max {:>6.1})  {n} results", times[3], times[0], times[6]);
+        }
+
+        // save and reload through the real code, in a scratch folder so the real cache is untouched
+        let scratch = std::env::temp_dir().join("lisdir_bench_cache");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::env::set_var("LOCALAPPDATA", &scratch);
+        let mut v = Volume { root: "Z:".into(), walk: false, idx, journal_id: 1, next_usn: 1, dirty: true };
+        let t = std::time::Instant::now();
+        save(&mut v).unwrap();
+        let (saved, size) = (ms(t.elapsed()), std::fs::metadata(cache_path("Z:")).unwrap().len());
+        println!("save {} entries: {:.0} ms, file {:.1} MB", v.idx.len(), saved, size as f64 / 1e6);
+        let t = std::time::Instant::now();
+        let back = load("Z:", false).unwrap();
+        println!("load (LSD3) {} entries: {:.0} ms", back.idx.len(), ms(t.elapsed()));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
     /// Manual benchmark on a few million names: cargo test --release bench_search -- --ignored --nocapture
     #[test]
     #[ignore]
