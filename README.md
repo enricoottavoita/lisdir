@@ -10,7 +10,8 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 ## Features
 
 - **Instant search over millions of files.** Local NTFS volumes are indexed by reading the MFT directly,
-  not by walking directories, which is far faster than scanning folders.
+  not by walking directories, which is far faster than scanning folders. Measured on 1.6 million entries
+  (two disks): a text search takes about 60–90 ms; filters such as `date:` and `size:` about 20 ms.
 - **Always current.** The index follows the NTFS USN journal (checked every second): files you create, rename,
   move or delete show up within a couple of seconds. The index is cached on disk, so a restart only has to catch
   up on what changed.
@@ -20,12 +21,13 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   letters already entered (toggle it in the tray menu).
 - **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher. Several words
   match in any order, and the matched letters are highlighted.
-- **Search syntax.** Narrow with `ext:pdf`, `date:week`, `-draft`, `"exact phrase"`, `docs\ report`; see below.
+- **Search syntax.** Narrow with `ext:pdf`, `date:week`, `size:>1gb`, `-draft`, `"exact phrase"`, `docs\ report`; see below.
 - **Recent items.** Open the bar and type nothing to see what you opened lately (`Del` removes one). Things you
   open often rank a little higher, but how well the name matches always counts most.
 - **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`.
 - **File-type icons.** Results show the same icons as Explorer, so videos, photos, documents and archives stand out.
 - **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
+- **Updates.** The tray menu offers a new version when one is published and installs it after you click.
 - **No admin UI.** The bar runs as a normal user; only a small background helper is elevated.
 - **English and Italian.** The language follows your Windows display language (set `LISDIR_LANG=it` or `en` to
   override). The installer is translated too.

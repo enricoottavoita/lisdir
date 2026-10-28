@@ -1,6 +1,6 @@
 [package]
 name = "lisdir"
-version = "0.14.0"
+version = "0.14.1"
 edition = "2021"
 description = "Fast search bar and app launcher for Windows: NTFS MFT index, live USN updates, network folders"
 license = "MIT"

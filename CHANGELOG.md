@@ -10,6 +10,8 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-28
+
 ### Changed
 - Searches run on several cores: with 1.6 million files, a text search dropped from about 250 ms to 60–90 ms.
 - Saving the index cache no longer pauses searches (it used to hold the index locked for a second or two, once a
@@ -117,7 +119,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/enricoottavoita/lisdir/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/enricoottavoita/lisdir/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/enricoottavoita/lisdir/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/enricoottavoita/lisdir/compare/v0.13.0...v0.13.1

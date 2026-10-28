@@ -10,7 +10,8 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 ## Funzioni
 
 - **Ricerca istantanea su milioni di file.** I dischi NTFS locali sono indicizzati leggendo direttamente la MFT,
-  senza scorrere le cartelle, molto più veloce di una scansione delle cartelle.
+  senza scorrere le cartelle, molto più veloce di una scansione delle cartelle. Misurato su 1,6 milioni di voci (due dischi): una ricerca di
+  testo richiede circa 60–90 ms; i filtri come `date:` e `size:` circa 20 ms.
 - **Sempre aggiornato.** L'indice segue il journal USN di NTFS (controllato ogni secondo): file creati, rinominati,
   spostati o eliminati compaiono entro un paio di secondi. L'indice è salvato su disco, quindi a ogni riavvio
   recupera solo ciò che è cambiato.
@@ -20,13 +21,14 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
   apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona).
 - **Ricerca approssimata.** `rdme` trova `README.md`; inizi di parola e lettere consecutive
   valgono di più. Più parole si trovano in qualsiasi ordine e le lettere trovate sono evidenziate.
-- **Sintassi di ricerca.** Restringi con `ext:pdf`, `date:week`, `-bozza`, `"frase esatta"`, `docs\ relazione`: vedi sotto.
+- **Sintassi di ricerca.** Restringi con `ext:pdf`, `date:week`, `size:>1gb`, `-bozza`, `"frase esatta"`, `docs\ relazione`: vedi sotto.
 - **Elementi recenti.** Apri la barra senza scrivere per vedere cosa hai aperto di recente (`Canc` ne rimuove uno).
   Ciò che apri spesso sale un poco, ma conta sempre di più quanto il nome corrisponde.
 - **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.
 - **Icone dei file.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto, documenti e
   archivi si distinguono subito.
 - **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude.
+- **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic.
 - **Interfaccia senza privilegi di amministratore.** La barra gira come utente normale; solo un piccolo
   programma in background è elevato.
 - **Italiano e inglese.** La lingua segue quella di Windows.

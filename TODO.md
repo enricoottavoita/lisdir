@@ -27,9 +27,12 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] `size:>1gb` / `size:10mb..1gb` filter (sizes read from the NTFS file records; from the directory listing for network folders)
 - [x] Exact `date:` on NTFS from the file record's modified time
 - [ ] Show sizes in the results
-- [ ] Search several thousand results faster than a full scan per keystroke (keep names in a flat array and use
-      several cores), if the 2-million-name budget (about 0.3 s) starts to feel slow
+- [ ] Search faster still: a text search over 1.6 million entries takes 60–90 ms, most of it listing the hash
+      map. Keep names in one flat array (and maybe a 3-letter index) if that starts to feel slow
+- [ ] Save only what changed instead of rewriting the whole cache (about 2 s for 1.6 million entries; it no
+      longer blocks searches). A small append-only log would do; a database like RocksDB is not needed
 - [x] Clear all recent items at once
+- [x] Search on several cores; cache saved without pausing searches (0.14.1)
 
 ## 0.14 — actions and preview
 - [ ] Action menu on a result (`Ctrl+O`, right arrow, right click) with shortcut hints in the footer
