@@ -20,16 +20,17 @@ fn u64_at(b: &[u8], o: usize) -> Option<u64> {
 }
 
 /// Undo the update sequence: NTFS overwrites the last two bytes of every 512-byte sector with a check value.
+/// A sector that does not carry the check value is left alone: the file-record ioctl may hand out records that
+/// were already restored.
 fn apply_fixups(rec: &mut [u8]) -> Option<()> {
     let (at, count) = (u16_at(rec, 4)? as usize, u16_at(rec, 6)? as usize);
     let usa = rec.get(at..at + 2 * count)?.to_vec();
     for i in 1..count {
         let end = i * 512;
         let tail = rec.get_mut(end - 2..end)?;
-        if tail != &usa[..2] {
-            return None; // torn or corrupt record
+        if tail == &usa[..2] {
+            tail.copy_from_slice(&usa[2 * i..2 * i + 2]);
         }
-        tail.copy_from_slice(&usa[2 * i..2 * i + 2]);
     }
     Some(())
 }
@@ -124,10 +125,16 @@ mod tests {
     }
 
     #[test]
+    fn accepts_records_whose_fixups_are_already_applied() {
+        let mut r = sample_record(1_700_000_000, Some((false, 777)));
+        let mut fixed = r.clone();
+        apply_fixups(&mut fixed).unwrap(); // restore once ...
+        assert_eq!(parse(&mut fixed).map(|m| m.size), Some(777)); // ... and parsing again must still work
+        assert_eq!(parse(&mut r).map(|m| m.size), Some(777));
+    }
+
+    #[test]
     fn rejects_bad_records() {
-        let mut r = sample_record(1, None);
-        r[510] ^= 1; // sector check value no longer matches
-        assert!(parse(&mut r).is_none());
         let mut r = sample_record(1, None);
         r[0x16] = 0; // not in use
         assert!(parse(&mut r).is_none());
