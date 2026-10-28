@@ -10,6 +10,8 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-28
+
 ### Added
 - `size:` filter: `size:>1gb`, `size:<10mb`, `size:10mb..1gb`, `size:empty` (units kb, mb, gb, tb; `>=` and `<=`
   also work). It matches files only and lists the biggest first when there are no words.
@@ -18,7 +20,7 @@ when releasing.
 - `date:` on local disks now uses the file's real modified time from its NTFS file record, not the time of its last
   USN journal record (which also moved on renames and permission changes). Edits are now tracked live too.
 - The index stores each file's size. Local disks are rebuilt once after updating (the cache format changed), which
-  reads one file record per file and takes longer than the previous scan.
+  reads one file record per file: about 11 seconds more for 1.2 million files, once per disk.
 
 ## [0.13.2] - 2026-10-28
 
@@ -110,7 +112,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/enricoottavoita/lisdir/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/enricoottavoita/lisdir/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/enricoottavoita/lisdir/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/enricoottavoita/lisdir/compare/v0.12.0...v0.13.0

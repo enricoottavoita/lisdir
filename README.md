@@ -130,7 +130,7 @@ does all of this in CI and publishes a GitHub release.
 - Type-to-search does not check whether something is selected, and does not work over elevated windows.
 - Setting up the elevated helper needs administrator rights once; after that the bar needs none.
 - Sizes are not shown in the results yet. After updating, each local disk is re-read once to collect sizes and
-  times, which takes longer than before. A file whose data is kept in an NTFS attribute list reports size 0.
+  times, which takes about 11 seconds more per million files, once. A file whose data is kept in an NTFS attribute list reports size 0.
 - Not yet implemented: an action menu and preview, a settings window with a configurable hotkey, Open/Save
   dialog integration, content search.
   The plan is in [TODO.md](TODO.md).
