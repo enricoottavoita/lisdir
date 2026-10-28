@@ -1,5 +1,7 @@
 # lisdir
 
+**English** · [Italiano](README.it.md)
+
 A fast, open-source file search bar for Windows. Press **Alt+Space** (or just start typing in an
 Explorer window or on the desktop) and find any file or folder on your machine as you type.
 
@@ -18,6 +20,8 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 - **Fuzzy matching.** `lsrysvc` finds `Listary.Service.exe`; word starts and consecutive letters score higher.
 - **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
 - **No admin UI.** The bar runs as a normal user; only a small background helper is elevated.
+- **English and Italian.** The language follows your Windows display language (set `LISDIR_LANG=it` or `en` to
+  override). The installer is translated too.
 
 ## How it works
 

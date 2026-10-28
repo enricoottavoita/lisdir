@@ -22,9 +22,22 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\lisdir.exe
 WizardStyle=modern
+ShowLanguageDialog=auto
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "italian"; MessagesFile: "compiler:Languages\Italian.isl"
+
+[CustomMessages]
+english.Autostart=Start lisdir when I sign in to Windows
+italian.Autostart=Avvia lisdir all'accesso a Windows
+english.InstallingService=Installing the index service...
+italian.InstallingService=Installazione del servizio di indicizzazione...
+english.StartNow=Start lisdir now
+italian.StartNow=Avvia lisdir ora
 
 [Tasks]
-Name: "autostart"; Description: "Start lisdir when I sign in to Windows"
+Name: "autostart"; Description: "{cm:Autostart}"
 
 [Files]
 Source: "..\src-tauri\target\release\lisdir.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -36,8 +49,8 @@ Name: "{autoprograms}\lisdir"; Filename: "{app}\lisdir.exe"
 ; Written as the user who launched the installer (not the elevated account), so it lands in the right HKCU.
 Filename: "{sys}\reg.exe"; Parameters: "add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v lisdir /t REG_SZ /d ""\""{app}\lisdir.exe\"""" /f"; Flags: runhidden runasoriginaluser; Tasks: autostart
 ; Register and start the elevated index helper (scheduled task at logon), then open the app as the normal user.
-Filename: "{app}\lisdir.exe"; Parameters: "--install"; Flags: runhidden waituntilterminated; StatusMsg: "Installing the index service..."
-Filename: "{app}\lisdir.exe"; Description: "Start lisdir now"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\lisdir.exe"; Parameters: "--install"; Flags: runhidden waituntilterminated; StatusMsg: "{cm:InstallingService}"
+Filename: "{app}\lisdir.exe"; Description: "{cm:StartNow}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [Code]
 // Stop a running copy (UI and elevated helper) so the exe can be replaced or removed.

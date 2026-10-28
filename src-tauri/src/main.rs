@@ -104,6 +104,23 @@ fn version() -> &'static str {
     VERSION
 }
 
+/// Italian on an Italian Windows UI, else English. LISDIR_LANG=it|en overrides (handy for testing).
+fn italian() -> bool {
+    match std::env::var("LISDIR_LANG").as_deref() {
+        Ok(l) => l == "it",
+        Err(_) => (unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() }) & 0x3ff == 0x10, // LANG_ITALIAN
+    }
+}
+
+fn t(en: &'static str, it: &'static str) -> &'static str {
+    if italian() { it } else { en }
+}
+
+#[tauri::command]
+fn lang() -> &'static str {
+    t("en", "it")
+}
+
 #[tauri::command]
 fn hide(w: WebviewWindow) {
     let _ = w.hide();
@@ -138,7 +155,10 @@ fn edit_roots() {
     let (dir, f) = (engine::data_dir(), engine::data_dir().join("roots.txt"));
     let _ = std::fs::create_dir_all(&dir);
     if !f.exists() {
-        let _ = std::fs::write(&f, "# One network folder per line, e.g. \\\\nas\\share. Mapped drives are found automatically.\r\n# Restart lisdir after editing.\r\n");
+        let _ = std::fs::write(&f, t(
+            "# One network folder per line, e.g. \\\\nas\\share. Mapped drives are found automatically.\r\n# Restart lisdir after editing.\r\n",
+            "# Una cartella di rete per riga, per esempio \\\\nas\\condivisione. Le unità mappate vengono trovate da sole.\r\n# Riavvia lisdir dopo le modifiche.\r\n",
+        ));
     }
     let _ = std::process::Command::new("notepad").arg(f).spawn();
 }
@@ -178,18 +198,18 @@ fn main() {
         .setup(|app| {
             start(&app.state::<App>());
             typesearch::start(app.handle().clone());
-            let type_search = CheckMenuItem::with_id(app, "typesearch", "Type to search in Explorer/Desktop", true, true, None::<&str>)?;
-            let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, reg(&["query", RUN_KEY, "/v", "lisdir"]), None::<&str>)?;
+            let type_search = CheckMenuItem::with_id(app, "typesearch", t("Type to search in Explorer/Desktop", "Digita per cercare in Esplora risorse/Desktop"), true, true, None::<&str>)?;
+            let autostart = CheckMenuItem::with_id(app, "autostart", t("Start with Windows", "Avvia con Windows"), true, reg(&["query", RUN_KEY, "/v", "lisdir"]), None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[
                     &MenuItem::with_id(app, "version", format!("lisdir {VERSION}"), false, None::<&str>)?,
-                    &MenuItem::with_id(app, "open", "Open (Alt+Space)", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "open", t("Open (Alt+Space)", "Apri (Alt+Spazio)"), true, None::<&str>)?,
                     &type_search,
                     &autostart,
-                    &MenuItem::with_id(app, "roots", "Network folders…", true, None::<&str>)?,
-                    &MenuItem::with_id(app, "install", "Install index service (admin)…", true, None::<&str>)?,
-                    &MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "roots", t("Network folders…", "Cartelle di rete…"), true, None::<&str>)?,
+                    &MenuItem::with_id(app, "install", t("Install index service (admin)…", "Installa servizio di indicizzazione (admin)…"), true, None::<&str>)?,
+                    &MenuItem::with_id(app, "quit", t("Quit", "Esci"), true, None::<&str>)?,
                 ],
             )?;
             TrayIconBuilder::new()
@@ -224,7 +244,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending, version])
+        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending, version, lang])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

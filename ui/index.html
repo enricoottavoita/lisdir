@@ -15,11 +15,28 @@
 </style>
 <input id="q" placeholder="Search files and folders…" autofocus autocomplete="off" spellcheck="false">
 <ul id="list"></ul>
-<div id="bar"><span id="ver" style="float:right"></span><span id="st"></span> · ↑↓ select · Enter open · Ctrl+Enter show in folder · Esc close</div>
+<div id="bar"><span id="ver" style="float:right"></span><span id="st"></span> · <span id="hint"></span></div>
 <script>
 const { invoke } = window.__TAURI__.core;
 const q = document.getElementById('q'), list = document.getElementById('list'), st = document.getElementById('st');
 let hits = [], sel = 0, seq = 0, pollTimer;
+
+// Interface language comes from the Rust side (Windows UI language), so the tray menu and this bar always agree.
+const STR = {
+  en: { ph: 'Search files and folders…', hint: '↑↓ select · Enter open · Ctrl+Enter show in folder · Esc close',
+        busy: 'Indexing…', items: n => n.toLocaleString() + ' items',
+        down: 'Index service not running (tray menu → Install index service)' },
+  it: { ph: 'Cerca file e cartelle…', hint: '↑↓ seleziona · Invio apri · Ctrl+Invio mostra nella cartella · Esc chiudi',
+        busy: 'Indicizzazione…', items: n => n.toLocaleString() + ' elementi',
+        down: 'Servizio di indicizzazione non attivo (menu icona → Installa servizio di indicizzazione)' },
+};
+let S = STR.en;
+function applyLang() {
+  q.placeholder = S.ph;
+  document.getElementById('hint').textContent = S.hint;
+}
+applyLang();
+invoke('lang').then(l => { S = STR[l] || STR.en; applyLang(); poll(); });
 
 function render() {
   list.replaceChildren(...hits.map((h, i) => {
@@ -45,8 +62,7 @@ function go(i, folder) {
 }
 async function poll() {
   const [busy, n, up] = await invoke('status');
-  st.textContent = !up ? 'Index service not running (tray menu → Install index service)'
-    : busy ? 'Indexing…' : n.toLocaleString() + ' items';
+  st.textContent = !up ? S.down : busy ? S.busy : S.items(n);
   clearTimeout(pollTimer); // one polling chain, however often the window regains focus
   if (busy || !up) pollTimer = setTimeout(poll, 1000);
   if (busy) run();

@@ -276,6 +276,6 @@ pub fn install() {
         Ok(quiet("schtasks", &["/Create", "/TN", TASK, "/XML", &path.to_string_lossy(), "/F"]) && start_helper())
     })();
     if !ok.unwrap_or(false) {
-        unsafe { MessageBoxW(null_mut(), wide("Could not install the lisdir index service.").as_ptr(), wide("lisdir").as_ptr(), MB_ICONERROR) };
+        unsafe { MessageBoxW(null_mut(), wide(crate::t("Could not install the lisdir index service.", "Impossibile installare il servizio di indicizzazione di lisdir.")).as_ptr(), wide("lisdir").as_ptr(), MB_ICONERROR) };
     }
 }
