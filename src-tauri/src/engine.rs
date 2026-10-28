@@ -38,7 +38,7 @@ pub struct Entry {
     /// last modification, unix seconds (0 = unknown). NTFS: from the file record; until that is read, the time of
     /// the file's last USN record.
     time: i64,
-    /// bytes (0 for folders and when unknown)
+    /// bytes (0 when unknown); for a folder, the sum of the files below it (see `sum_folders`)
     pub size: u64,
 }
 
@@ -305,6 +305,7 @@ pub fn scan_volume(letter: char) -> Result<Volume, String> {
         }
     }
     fill_meta(&h, &mut idx);
+    sum_folders(&mut idx);
     // ponytail: no active journal => journal_id 0, no live updates and no cache (always rescanned).
     Ok(Volume { root: format!("{letter}:"), walk: false, idx, journal_id: j.map_or(0, |j| j.UsnJournalID), next_usn: j.map_or(0, |j| j.NextUsn), dirty: true })
 }
@@ -348,16 +349,65 @@ pub fn read_changes(v: &Volume) -> Result<(Vec<Change>, i64), String> {
     }
 }
 
+/// Add `delta` bytes to the folder `parent` and every folder above it. Bounded: the NTFS root is its own parent,
+/// and a damaged index could hold a loop.
+fn add_up(idx: &mut Index, mut parent: u64, delta: i64) {
+    for _ in 0..256 {
+        let Some(p) = idx.get_mut(&parent) else { return };
+        p.size = p.size.saturating_add_signed(delta);
+        if p.parent == parent {
+            return;
+        }
+        parent = p.parent;
+    }
+}
+
+/// Set each folder's size to the sum of the files below it: one pass over the entries to total each folder's own
+/// files, then each folder walks its total up. Once per load or scan; `apply` keeps the totals current.
+pub fn sum_folders(idx: &mut Index) {
+    let mut own: HashMap<u64, u64> = HashMap::new();
+    for (_, e) in idx.items.iter_mut() {
+        match e {
+            Some(e) if e.is_dir => e.size = 0,
+            Some(e) if e.size > 0 => *own.entry(e.parent).or_default() += e.size,
+            _ => {}
+        }
+    }
+    for (parent, size) in own {
+        add_up(idx, parent, size as i64);
+    }
+}
+
 pub fn apply(v: &mut Volume, changes: Vec<Change>, next_usn: i64) {
     v.dirty |= !changes.is_empty();
     for c in changes {
         match c {
-            Change::Upsert(frn, parent, name, is_dir, time) => { v.idx.insert(frn, Entry::new(parent, name, is_dir, time)); }
-            Change::Delete(frn) => { v.idx.remove(&frn); }
+            Change::Upsert(frn, parent, name, is_dir, time) => {
+                let mut e = Entry::new(parent, name, is_dir, time);
+                // a moved or renamed entry takes its bytes out of the old folders; a folder keeps its total
+                if let Some(old) = v.idx.get(&frn) {
+                    let (old_parent, old_size, was_dir) = (old.parent, old.size, old.is_dir);
+                    add_up(&mut v.idx, old_parent, -(old_size as i64));
+                    if was_dir && is_dir {
+                        e.size = old_size;
+                    }
+                }
+                let size = e.size;
+                v.idx.insert(frn, e);
+                add_up(&mut v.idx, parent, size as i64);
+            }
+            Change::Delete(frn) => {
+                if let Some(old) = v.idx.remove(&frn) {
+                    add_up(&mut v.idx, old.parent, -(old.size as i64));
+                }
+            }
             Change::Meta(frn, time, size) => {
-                if let Some(e) = v.idx.get_mut(&frn) {
-                    e.time = time;
+                let Some(e) = v.idx.get_mut(&frn) else { continue };
+                e.time = time;
+                if !e.is_dir {
+                    let (parent, delta) = (e.parent, size as i64 - e.size as i64);
                     e.size = size;
+                    add_up(&mut v.idx, parent, delta);
                 }
             }
         }
@@ -547,6 +597,7 @@ pub fn open(letter: char) -> Result<Volume, String> {
         if live.is_some_and(|j| j.UsnJournalID == v.journal_id && v.next_usn >= j.FirstUsn) {
             if let Ok((c, n)) = read_changes(&v) {
                 apply(&mut v, c, n);
+                sum_folders(&mut v.idx); // the cache holds totals too, but recounting is cheap and repairs any drift
                 return Ok(v);
             }
         }
@@ -666,7 +717,12 @@ pub fn walk(root: &str, stream: Option<&RwLock<Volume>>) -> Walk {
             });
         }
     });
-    Walk { idx: idx.into_inner().unwrap(), dirs: dirs.into_inner(), failed: failed.into_inner() }
+    let mut idx = idx.into_inner().unwrap();
+    match stream {
+        Some(v) => sum_folders(&mut v.write().unwrap().idx),
+        None => sum_folders(&mut idx),
+    }
+    Walk { idx, dirs: dirs.into_inner(), failed: failed.into_inner() }
 }
 
 // ---- search
@@ -1089,6 +1145,58 @@ mod tests {
     }
 
     #[test]
+    fn folder_sizes_follow_changes() {
+        // C:\a\b\x.bin (100), C:\a\y.bin (10), C:\c\ (empty); the NTFS root 5 is its own parent
+        let mut v = sample_volume();
+        v.idx = Index::new();
+        v.idx.insert(5, Entry::new(5, "".into(), true, NOW));
+        v.idx.insert(10, Entry::new(5, "a".into(), true, NOW));
+        v.idx.insert(11, Entry::new(10, "b".into(), true, NOW).with_size(4096)); // a folder's record size is not its total
+        v.idx.insert(12, Entry::new(11, "x.bin".into(), false, NOW).with_size(100));
+        v.idx.insert(13, Entry::new(10, "y.bin".into(), false, NOW).with_size(10));
+        v.idx.insert(14, Entry::new(5, "c".into(), true, NOW));
+        sum_folders(&mut v.idx);
+        let sizes = |v: &Volume| [10, 11, 14].map(|f| v.idx[&f].size);
+        assert_eq!(sizes(&v), [110, 100, 0]);
+
+        apply(&mut v, vec![Change::Meta(12, NOW, 300)], 1); // x.bin grows
+        assert_eq!(sizes(&v), [310, 300, 0]);
+        apply(&mut v, vec![Change::Upsert(11, 14, "b".into(), true, NOW), Change::Meta(11, NOW, 4096)], 2); // move b into c
+        assert_eq!(sizes(&v), [10, 300, 300]);
+        apply(&mut v, vec![Change::Upsert(13, 10, "z.bin".into(), false, NOW), Change::Meta(13, NOW, 10)], 3); // rename y.bin
+        assert_eq!(sizes(&v), [10, 300, 300]);
+        apply(&mut v, vec![Change::Upsert(15, 10, "new.bin".into(), false, NOW), Change::Meta(15, NOW, 5), Change::Delete(12)], 4);
+        assert_eq!(sizes(&v), [15, 0, 0]);
+        let live = sizes(&v);
+        sum_folders(&mut v.idx);
+        assert_eq!(sizes(&v), live, "the running totals equal a recount");
+        assert_eq!(v.idx[&5].size, 15);
+    }
+
+    /// The one-time recount at load must stay small next to reading the cache (about a second for 1.6 million
+    /// entries). Run `cargo test --release folder_sum_cost -- --nocapture` for the number.
+    #[test]
+    fn folder_sum_cost() {
+        if cfg!(debug_assertions) {
+            return;
+        }
+        // 1.6 million entries: 160k folders, 10 levels deep in a chain of 16k-folder trees, 9 files each
+        let mut idx = Index::with_capacity(1_600_000);
+        for d in 1..=160_000u64 {
+            idx.insert(d, Entry::new(if d % 10 == 1 { 0 } else { d - 1 }, format!("folder {d}"), true, NOW));
+            for k in 0..9 {
+                idx.insert(1_000_000 + d * 9 + k, Entry::new(d, format!("file {k}.bin"), false, NOW).with_size(1000));
+            }
+        }
+        let t = std::time::Instant::now();
+        sum_folders(&mut idx);
+        let took = t.elapsed();
+        println!("sum_folders over {} entries: {:.0} ms", idx.len(), took.as_secs_f64() * 1000.0);
+        assert_eq!(idx[&1].size, 90_000); // the top of a 10-folder chain holds all 90 files
+        assert!(took < Duration::from_millis(1500), "{took:?}");
+    }
+
+    #[test]
     fn walk_finds_nested_files() {
         let root = std::env::temp_dir().join("lisdir_walk_test");
         let _ = std::fs::remove_dir_all(&root);
@@ -1103,6 +1211,8 @@ mod tests {
         let hit = search(&idx, &q("deepf"), 5)[0].1;
         assert_eq!(full_path(&idx, hit, r), format!("{r}\\a\\b\\deep file.txt"));
         assert!(idx[&hit].time > NOW, "walked entries carry their modified time"); // written just now
+        let folder = |n: &str| idx.iter().find(|(_, e)| e.name == n).unwrap().1.size;
+        assert_eq!((folder("a"), folder("b")), (1, 1)); // folders add up the files below them
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1117,6 +1227,7 @@ mod tests {
         let w = walk(r, Some(&vol));
         assert!(w.reliable() && w.idx.is_empty());
         assert_eq!(vol.read().unwrap().idx.len(), 2); // a, one.txt
+        assert_eq!(vol.read().unwrap().idx.iter().find(|(_, e)| e.is_dir).unwrap().1.size, 1);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

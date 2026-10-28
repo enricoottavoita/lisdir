@@ -25,8 +25,9 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Elementi recenti.** Apri la barra senza scrivere per vedere cosa hai aperto di recente (`Canc` ne rimuove uno).
   Ciò che apri spesso sale un poco, ma conta sempre di più quanto il nome corrisponde.
 - **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.
-- **Icone dei file.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto, documenti e
-  archivi si distinguono subito.
+- **Icone dei file e dimensioni.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto,
+  documenti e archivi si distinguono subito, e a destra la dimensione: per una cartella, il totale dei file che
+  contiene, aggiornato quando cambiano.
 - **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude.
 - **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic,
   dopo aver verificato lo SHA-256. Questo controllo è l'unica richiesta internet che lisdir fa.
@@ -84,8 +85,9 @@ dell'icona: **Cartelle di rete…**).
 **Aggiornamenti.** lisdir controlla le release su GitHub pochi secondi dopo l'avvio e poi ogni giorno; se ce n'è una
 nuova, il menu dell'icona propone «Aggiorna a X.Y.Z…» (oppure scegli «Controlla aggiornamenti…» quando vuoi). Scarica
 l'installer, ne verifica lo SHA-256 con il file `SHA256SUMS.txt` pubblicato e lo avvia; Windows chiede il permesso e
-lisdir si riapre alla fine. Non installa nulla senza un tuo clic. L'aggiornamento esegue sempre l'installer, quindi
-una copia avviata dall'exe portatile finisce installata in Program Files.
+lisdir si riapre alla fine. Non installa nulla senza un tuo clic. Una copia portatile resta portatile: scarica il
+nuovo exe portatile, lo verifica allo stesso modo, lo mette al posto del vecchio file e si riavvia (nessuna richiesta
+di permesso; la cartella deve essere scrivibile).
 
 ## Compilare
 
@@ -110,7 +112,7 @@ cargo build --release
 - I diritti di amministratore servono una volta, per configurare l'helper elevato; poi la barra non li richiede.
 - La prima scansione di un disco locale legge un record per file per raccogliere dimensioni e date: circa 11 secondi in
   più per milione di file, una volta per disco (e di nuovo se cambia il formato della cache).
-- Le cartelle non mostrano la dimensione, e non si possono ancora ordinare i risultati per dimensione o data.
+- Non si possono ancora ordinare i risultati per dimensione o data, e `size:` non trova le cartelle.
 - Non ancora presenti: menu azioni e anteprima, finestra delle impostazioni con scorciatoia configurabile,
   integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 

@@ -10,6 +10,18 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-28
+
+### Added
+- Folder sizes in the results: each folder shows the total of the files below it, kept current from the
+  USN journal. Adding them up at load costs about 0.3 s per 1.6 million entries, in the background; searches are
+  unchanged.
+
+### Changed
+- Updates for the portable exe: it now replaces itself with the new portable exe (verified by SHA-256, no
+  permission prompt) and restarts, instead of running the installer into Program Files. A portable 0.14.2 still
+  updates to this version through the installer, because the old update code runs; from 0.14.3 on it stays portable.
+
 ## [0.14.2] - 2026-10-28
 
 ### Added
@@ -132,7 +144,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.14.3...HEAD
+[0.14.3]: https://github.com/enricoottavoita/lisdir/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/enricoottavoita/lisdir/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/enricoottavoita/lisdir/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/enricoottavoita/lisdir/compare/v0.13.2...v0.14.0

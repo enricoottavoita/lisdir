@@ -28,7 +28,8 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   open often rank a little higher, but how well the name matches always counts most.
 - **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`. The
   list is refreshed when the bar opens, so new installs show up without a restart.
-- **File-type icons and sizes.** Results show the same icons as Explorer, and each file's size at the right.
+- **File-type icons and sizes.** Results show the same icons as Explorer, and the size at the right: for a folder, the
+  total of the files inside it, kept current as they change.
 - **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
 - **Updates.** The tray menu offers a new version when one is published and installs it after you click, checking
   its SHA-256 first. This check is the only internet request lisdir makes.
@@ -85,7 +86,7 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost |
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
 | `src-tauri/src/icons.rs` | Shell file-type icons rendered to PNG |
-| `src-tauri/src/update.rs` | Update check against the GitHub releases; downloads and verifies the installer |
+| `src-tauri/src/update.rs` | Update check against the GitHub releases; downloads and verifies the installer, or swaps in the portable exe |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
 | `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
 | `ui/index.html` | The search bar (plain HTML/JS, no build step) |
@@ -123,8 +124,9 @@ Extra network folders go in `%LOCALAPPDATA%\lisdir\roots.txt`, one path per line
 **Updates.** lisdir checks the GitHub releases a few seconds after it starts and then daily; when a newer one
 exists the tray menu offers "Update to X.Y.Z…" (or choose "Check for updates…" at any time). It downloads the
 installer, verifies its SHA-256 against the published `SHA256SUMS.txt`, and starts it; Windows asks for
-permission, and lisdir reopens afterwards. Nothing is installed without your click. The update always runs the
-installer, so a copy started from the portable exe ends up installed in Program Files.
+permission, and lisdir reopens afterwards. Nothing is installed without your click. A portable copy stays
+portable: it downloads the new portable exe instead, verifies it the same way, puts it in place of the old file and
+restarts (no permission prompt; the folder must be writable).
 
 To build the installer yourself: install [Inno Setup 6](https://jrsoftware.org/isinfo.php), build the release
 binary, then run `ISCC /DMyVersion=<version> installer\lisdir.iss` (output in `dist\`). Pushing a `v*` tag
@@ -144,7 +146,7 @@ does all of this in CI and publishes a GitHub release.
 - Setting up the elevated helper needs administrator rights once; after that the bar needs none.
 - The first scan of a local disk reads one file record per file to collect sizes and times; that takes about 11
   seconds more per million files, once per disk (and again whenever the cache format changes).
-- Folders have no size shown, and there is no way yet to sort results by size or date.
+- There is no way yet to sort results by size or date, and `size:` does not match folders.
 - Not yet implemented: an action menu and preview, a settings window with a configurable hotkey, Open/Save
   dialog integration, content search.
   The plan is in [TODO.md](TODO.md).

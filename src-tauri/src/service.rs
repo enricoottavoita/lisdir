@@ -3,7 +3,8 @@
 //! normal user and is only a client. The pipe is ACL'd to the current user and SYSTEM.
 //!
 //! Wire format, one request per line: `S\t<query>\n`. Reply: `H\t<score>\t<is_dir>\t<name>\t<path>\t<size>\n`*
-//! then `E\t<busy 0|1>\t<item count>\n`. An empty query returns only the `E` line (a status probe).
+//! then `E\t<busy 0|1>\t<item count>\n`. An empty query returns only the `E` line (a status probe). `Q\n` makes
+//! the helper exit.
 use crate::{engine, query::{Clock, Query}};
 use serde::Serialize;
 use std::{
@@ -47,7 +48,7 @@ pub struct Hit {
     pub app: bool,
     /// char positions of `name` to highlight (filled in by the UI process, not sent over the pipe)
     pub hl: Vec<usize>,
-    /// bytes; 0 for folders, apps and when unknown (the UI shows nothing then)
+    /// bytes (a folder: the files below it); 0 for apps and when unknown (the UI shows nothing then)
     pub size: u64,
     #[serde(skip)]
     pub score: f32,
@@ -194,6 +195,9 @@ fn answer(q: &str, vols: &Volumes, busy: &AtomicUsize) -> String {
 fn handle(f: File, vols: Volumes, busy: Arc<AtomicUsize>) {
     let (mut r, mut w, mut line) = (BufReader::new(&f), &f, String::new());
     while r.read_line(&mut line).unwrap_or(0) > 0 {
+        if line.trim_end() == "Q" {
+            std::process::exit(0); // a portable update replaced our exe, see `stop_helper`
+        }
         let q = line.trim_end().strip_prefix("S\t").unwrap_or("").to_string();
         line.clear();
         if w.write_all(answer(&q, &vols, &busy).as_bytes()).is_err() {
@@ -292,6 +296,15 @@ fn quiet(cmd: &str, args: &[&str]) -> bool {
 /// Start the (already installed) elevated helper task. Needs no UAC prompt: running your own task is allowed.
 pub fn start_helper() -> bool {
     quiet("schtasks", &["/Run", "/TN", TASK])
+}
+
+/// Ask the helper to quit (`Q`), so the task can start it again from a replaced exe. A helper older than 0.14.3
+/// ignores `Q`; `/End` is the fallback, which may be refused unelevated: then the old helper serves until sign-out.
+pub fn stop_helper() {
+    if let Ok(f) = OpenOptions::new().write(true).open(PIPE) {
+        let _ = writeln!(&f, "Q");
+    }
+    quiet("schtasks", &["/End", "/TN", TASK]);
 }
 
 /// Ask Windows for elevation and re-run ourselves as `--install`.

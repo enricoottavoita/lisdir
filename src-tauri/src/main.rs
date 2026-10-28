@@ -296,7 +296,8 @@ fn check_update(app: &AppHandle, item: &Item, manual: bool) {
     }
 }
 
-/// Download and start the installer for the update the user accepted, then quit so it can replace this exe.
+/// Download and start the installer (or swap in the new portable exe) for the update the user accepted, then quit
+/// so the new version can take over.
 fn install_update(app: &AppHandle, item: &Item) {
     let Some(u) = app.state::<App>().update.lock().unwrap().take() else { return };
     set_item(item, format!("{} {}…", t("Downloading", "Scarico"), u.version), false);
@@ -315,6 +316,7 @@ fn main() {
         Some("--install") => return service::install(),
         _ => {}
     }
+    update::cleanup();
     tauri::Builder::default()
         .plugin(
             Shortcuts::new()

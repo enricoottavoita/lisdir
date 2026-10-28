@@ -24,11 +24,10 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Search on several cores; the cache is saved without pausing searches (0.14.1)
 - [x] File sizes shown in the results; changes appended to a log instead of rewriting the cache; entries in one
       flat list: a text search over 1.6 million entries takes 35–60 ms (0.14.2)
+- [x] Folder sizes (sum of their files, kept current); the portable exe updates itself in place (0.14.3)
 
 ## Next up (small)
-- [ ] Updates for the portable exe: replace the portable file instead of installing to Program Files
 - [ ] Option to turn off the daily update check (belongs in the settings window, 0.16)
-- [ ] Show sizes of folders (sum of their files) if it can be done without slowing the index
 - [ ] If search ever feels slow again: keep lowercase names in one byte buffer (no pointer per name) and/or a
       3-letter index
 

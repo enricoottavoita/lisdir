@@ -98,7 +98,7 @@ function render() {
     s.textContent = h.app ? S.app : h.path;
     tx.append(s);
     li.append(img, tx);
-    if (h.size > 0 && !h.is_dir) {
+    if (h.size > 0) {
       const sz = document.createElement('span');
       sz.className = 'sz';
       sz.textContent = fmtSize(h.size);
