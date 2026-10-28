@@ -28,7 +28,8 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Icone dei file.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto, documenti e
   archivi si distinguono subito.
 - **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude.
-- **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic.
+- **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic,
+  dopo aver verificato lo SHA-256. Questo controllo è l'unica richiesta internet che lisdir fa.
 - **Interfaccia senza privilegi di amministratore.** La barra gira come utente normale; solo un piccolo
   programma in background è elevato.
 - **Italiano e inglese.** La lingua segue quella di Windows.
@@ -80,7 +81,11 @@ Esegui comunque*.
 Altre cartelle di rete si aggiungono in `%LOCALAPPDATA%\lisdir\roots.txt`, un percorso per riga (dal menu
 dell'icona: **Cartelle di rete…**).
 
-**Aggiornamenti.** lisdir controlla ogni giorno le release su GitHub; se ce n'è una nuova, il menu dell'icona propone «Aggiorna a X.Y.Z…». Scarica l'installer, ne verifica lo SHA-256 con il file `SHA256SUMS.txt` pubblicato e lo avvia. Non installa nulla senza un tuo clic.
+**Aggiornamenti.** lisdir controlla le release su GitHub pochi secondi dopo l'avvio e poi ogni giorno; se ce n'è una
+nuova, il menu dell'icona propone «Aggiorna a X.Y.Z…» (oppure scegli «Controlla aggiornamenti…» quando vuoi). Scarica
+l'installer, ne verifica lo SHA-256 con il file `SHA256SUMS.txt` pubblicato e lo avvia; Windows chiede il permesso e
+lisdir si riapre alla fine. Non installa nulla senza un tuo clic. L'aggiornamento esegue sempre l'installer, quindi
+una copia avviata dall'exe portatile finisce installata in Program Files.
 
 ## Compilare
 
@@ -97,14 +102,15 @@ cargo build --release
 
 - Solo NTFS per i dischi locali (ReFS, exFAT e FAT non sono indicizzati).
 - Le cartelle di rete vengono riscansionate, non osservate: le modifiche compaiono al prossimo aggiornamento.
-- Una cartella di rete non dà risultati finché la prima scansione non è finita (minuti per una condivisione molto
-  grande); dagli avvii successivi usa la cache.
-- L'elenco delle app viene letto all'avvio di lisdir: un'app appena installata compare dopo un riavvio.
+- Una cartella di rete alla primissima scansione mostra risultati parziali finché non è finita (minuti per una
+  condivisione molto grande); dagli avvii successivi usa la cache.
+- Dimensioni e date dei dischi locali vengono dai record NTFS. Un file i cui dati stanno in un record di estensione
+  (molto frammentato o con molti attributi) risulta di dimensione 0 e la dimensione non viene mostrata.
 - "Digita per cercare" non controlla se c'è qualcosa di selezionato e non funziona sopra finestre elevate.
 - I diritti di amministratore servono una volta, per configurare l'helper elevato; poi la barra non li richiede.
-- Le dimensioni non sono ancora mostrate nei risultati. Dopo l'aggiornamento ogni disco locale viene riletto una volta
-  per raccogliere dimensioni e date, e ci vuole più tempo di prima. Un file i cui dati stanno in una lista di
-  attributi NTFS risulta di dimensione 0.
+- La prima scansione di un disco locale legge un record per file per raccogliere dimensioni e date: circa 11 secondi in
+  più per milione di file, una volta per disco (e di nuovo se cambia il formato della cache).
+- Le cartelle non mostrano la dimensione, e non si possono ancora ordinare i risultati per dimensione o data.
 - Non ancora presenti: menu azioni e anteprima, finestra delle impostazioni con scorciatoia configurabile,
   integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 

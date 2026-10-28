@@ -11,35 +11,34 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] English and Italian (0.11)
 - [x] App launcher: Start menu and Store apps ranked together with files (0.12)
 - [x] File-type icons in results (0.12)
+- [x] Keep results when a network folder is unreachable (0.13)
 - [x] Search syntax: `ext:`, `-exclude`, `"phrase"`, `folder:`/`file:`, `date:`, category keywords, `app:` (0.13)
 - [x] Narrow by folder with a trailing `\` (0.13)
 - [x] Ranking: name match first, modest boost for what you open often (0.13)
 - [x] Recent items before you type (`Del` removes one); matched letters highlighted (0.13)
 - [x] Latency budget test and a manual benchmark for millions of names (0.13)
-- [x] Update check and one-click update from the tray menu, verified by SHA-256
+- [x] Update check and one-click update from the tray menu, verified by SHA-256 (0.13.2)
+- [x] Network results shown while the first walk is still running; app list refreshed when the bar opens;
+      `Shift+Del` clears all recent items (0.13.2)
+- [x] `size:` filter and exact modified times from the NTFS file records (0.14)
+- [x] Search on several cores; the cache is saved without pausing searches (0.14.1)
+- [x] File sizes shown in the results; changes appended to a log instead of rewriting the cache; entries in one
+      flat list: a text search over 1.6 million entries takes 35–60 ms (0.14.2)
 
-## 0.12.x — fixes first
-- [x] **Keep results when a network folder is unreachable** (a failed walk no longer replaces the index or cache)
-- [x] Show network results while the first walk is still running (stream entries into the index)
-- [x] Refresh the app list when the Start menu changes, not only at startup
+## Next up (small)
+- [ ] Updates for the portable exe: replace the portable file instead of installing to Program Files
+- [ ] Option to turn off the daily update check (belongs in the settings window, 0.16)
+- [ ] Show sizes of folders (sum of their files) if it can be done without slowing the index
+- [ ] If search ever feels slow again: keep lowercase names in one byte buffer (no pointer per name) and/or a
+      3-letter index
 
-## 0.13.x — search follow-ups
-- [x] `size:>1gb` / `size:10mb..1gb` filter (sizes read from the NTFS file records; from the directory listing for network folders)
-- [x] Exact `date:` on NTFS from the file record's modified time
-- [x] Show sizes in the results
-- [x] Search faster still: entries in one flat list split across the cores (35–60 ms for 1.6 million entries)
-- [ ] If that is still too slow: keep lowercase names in one byte buffer (no pointer per name) and/or a 3-letter index
-- [x] Save only what changed: changes are appended to a log, the cache is rewritten rarely (no database needed)
-- [x] Clear all recent items at once
-- [x] Search on several cores; cache saved without pausing searches (0.14.1)
-
-## 0.14 — actions and preview
+## 0.15 — actions and preview
 - [ ] Action menu on a result (`Ctrl+O`, right arrow, right click) with shortcut hints in the footer
 - [ ] Copy / cut a file to the clipboard (`Ctrl+C`, `Ctrl+X`), copy path, open with, open terminal here, properties
 - [ ] Preview pane (`Alt+P`) that shows contents: text, images, thumbnails
 - [ ] Pin files and folders so they always show up first
 
-## 0.15 — settings and control
+## 0.16 — settings and control
 - [ ] Settings window: configurable hotkey (including double-tap `Ctrl`; reject plain character keys such as
       `Space` alone), language override, theme presets, hide the tray icon
 - [ ] Choose which folders are indexed
@@ -49,15 +48,15 @@ unelevated, and every feature ships with a test or a measured check.
       drive is unplugged
 - [ ] Cloud-synced folders (OneDrive, Google Drive, Dropbox) as ordinary indexed folders
 
-## 0.16 — search window
+## 0.17 — search window
 - [ ] Persistent search window that stays open to compare files
-- [ ] Sortable columns including size and date modified; sizes shown in KB/MB/GB
+- [ ] Sortable columns including size and date modified
 - [ ] Multi-select: copy, cut, delete, copy paths, drag several files at once
 - [ ] Filter presets (Documents, Pictures, Last 7 days) that show their result counts before you apply them;
       Ctrl+click combines several
 - [ ] Switch between the quick bar and the window with double-tap `Ctrl`, keeping the query
 
-## 0.17 — diagnostics
+## 0.18 — diagnostics
 - [ ] **"Why can't I find this?"** — give a path or file name and explain: not on an indexed disk, excluded,
       unsupported file system, helper not running, network folder not yet walked, and how to fix it
 - [ ] About page: item counts, per-volume status, last walk times, and a small built-in speed test

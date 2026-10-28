@@ -13,21 +13,25 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   not by walking directories, which is far faster than scanning folders. Measured on 1.6 million entries
   (two disks): a text search takes about 35–60 ms; filters such as `date:` and `size:` about 10–15 ms.
 - **Always current.** The index follows the NTFS USN journal (checked every second): files you create, rename,
-  move or delete show up within a couple of seconds. The index is cached on disk, so a restart only has to catch
-  up on what changed.
+  move or delete show up within a couple of seconds, and so do edits (the modified time and size are refreshed when
+  a file is closed). The index is cached on disk, so a restart only has to catch up on what changed; between
+  restarts only the changes are appended to a small log, not the whole cache rewritten.
 - **Network folders.** Mapped drives and UNC paths (SMB shares) are indexed by a parallel directory walk and
-  refreshed every 10 minutes.
+  refreshed every 10 minutes. On the very first walk, results appear while it is still running.
 - **Type to search.** With an Explorer folder or the desktop focused, typing letters opens the bar with those
   letters already entered (toggle it in the tray menu).
 - **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher. Several words
   match in any order, and the matched letters are highlighted.
 - **Search syntax.** Narrow with `ext:pdf`, `date:week`, `size:>1gb`, `-draft`, `"exact phrase"`, `docs\ report`; see below.
-- **Recent items.** Open the bar and type nothing to see what you opened lately (`Del` removes one). Things you
+- **Recent items.** Open the bar and type nothing to see what you opened lately (`Del` removes one, `Shift+Del`
+  clears the list). Things you
   open often rank a little higher, but how well the name matches always counts most.
-- **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`.
-- **File-type icons.** Results show the same icons as Explorer, so videos, photos, documents and archives stand out.
+- **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`. The
+  list is refreshed when the bar opens, so new installs show up without a restart.
+- **File-type icons and sizes.** Results show the same icons as Explorer, and each file's size at the right.
 - **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
-- **Updates.** The tray menu offers a new version when one is published and installs it after you click.
+- **Updates.** The tray menu offers a new version when one is published and installs it after you click, checking
+  its SHA-256 first. This check is the only internet request lisdir makes.
 - **No admin UI.** The bar runs as a normal user; only a small background helper is elevated.
 - **English and Italian.** The language follows your Windows display language (set `LISDIR_LANG=it` or `en` to
   override). The installer is translated too.
@@ -45,8 +49,8 @@ Plain words match file names; everything else narrows the results. All of it can
 | `docs\ report` | "report" inside a folder whose name contains "docs" |
 | `folder:` / `file:` | only folders / only files |
 | `doc:` `pic:` `video:` `music:` `zip:` | a whole category of file types |
-| `date:today`, `yesterday`, `week`, `month`, `year` | changed today / yesterday / in the last 7, 30, 365 days |
-| `date:2026`, `date:2026-07`, `date:2026-07-31` | changed in that year / month / day |
+| `date:today`, `yesterday`, `week`, `month`, `year` | modified today / yesterday / in the last 7, 30, 365 days |
+| `date:2026`, `date:2026-07`, `date:2026-07-31` | modified in that year / month / day |
 | `size:>1gb`, `size:<10mb`, `size:10mb..1gb`, `size:empty` | file size (`>` `>=` `<` `<=`, a range, or empty); units kb mb gb tb |
 | `app:` | apps only |
 
@@ -74,12 +78,14 @@ folders itself, because only your user session has your credentials and drive ma
 
 | File | Role |
 |---|---|
-| `src-tauri/src/engine.rs` | MFT enumeration, USN journal tailing, cache, directory walker, fuzzy matcher |
+| `src-tauri/src/engine.rs` | The index (flat list of entries), MFT enumeration, USN journal tailing, cache and change log, directory walker, fuzzy matcher, parallel search |
+| `src-tauri/src/mft.rs` | Reads modified time and size out of a raw NTFS file record |
 | `src-tauri/src/service.rs` | Elevated helper, pipe server/client, scheduled-task install |
 | `src-tauri/src/query.rs` | The search syntax: parsing `ext:`, `date:`, quotes, `docs\`, ... |
 | `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost |
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
 | `src-tauri/src/icons.rs` | Shell file-type icons rendered to PNG |
+| `src-tauri/src/update.rs` | Update check against the GitHub releases; downloads and verifies the installer |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
 | `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
 | `ui/index.html` | The search bar (plain HTML/JS, no build step) |
@@ -114,7 +120,11 @@ Tray menu options: type-to-search on/off, start with Windows, edit network folde
 
 Extra network folders go in `%LOCALAPPDATA%\lisdir\roots.txt`, one path per line.
 
-**Updates.** lisdir checks the GitHub releases daily; when a newer one exists the tray menu offers "Update to X.Y.Z…". It downloads the installer, verifies its SHA-256 against the published `SHA256SUMS.txt`, and starts it. Nothing is installed without your click.
+**Updates.** lisdir checks the GitHub releases a few seconds after it starts and then daily; when a newer one
+exists the tray menu offers "Update to X.Y.Z…" (or choose "Check for updates…" at any time). It downloads the
+installer, verifies its SHA-256 against the published `SHA256SUMS.txt`, and starts it; Windows asks for
+permission, and lisdir reopens afterwards. Nothing is installed without your click. The update always runs the
+installer, so a copy started from the portable exe ends up installed in Program Files.
 
 To build the installer yourself: install [Inno Setup 6](https://jrsoftware.org/isinfo.php), build the release
 binary, then run `ISCC /DMyVersion=<version> installer\lisdir.iss` (output in `dist\`). Pushing a `v*` tag
@@ -124,15 +134,17 @@ does all of this in CI and publishes a GitHub release.
 
 - NTFS only for local disks (ReFS, exFAT and FAT volumes are not indexed).
 - Network folders are re-walked rather than watched, so changes appear after the next refresh.
+- Sizes and times on local disks come from the NTFS file records. A file whose data attribute sits in an extension
+  record (a heavily fragmented or very attribute-rich file) reports size 0, and the size is not shown for it.
 - The scheduled task points at the exe's current path; moving or rebuilding it while the helper runs
   requires stopping the helper first (the installer handles this on upgrade).
-- A network folder returns no results until its first walk finishes (minutes for a very large share); later
-  starts use the cache.
-- The app list is read when lisdir starts, so a newly installed app appears after a restart.
+- A network folder on its very first walk shows partial results until the walk finishes (minutes for a very large
+  share); later starts use the cache.
 - Type-to-search does not check whether something is selected, and does not work over elevated windows.
 - Setting up the elevated helper needs administrator rights once; after that the bar needs none.
-- Sizes are not shown in the results yet. After updating, each local disk is re-read once to collect sizes and
-  times, which takes about 11 seconds more per million files, once. A file whose data is kept in an NTFS attribute list reports size 0.
+- The first scan of a local disk reads one file record per file to collect sizes and times; that takes about 11
+  seconds more per million files, once per disk (and again whenever the cache format changes).
+- Folders have no size shown, and there is no way yet to sort results by size or date.
 - Not yet implemented: an action menu and preview, a settings window with a configurable hotkey, Open/Save
   dialog integration, content search.
   The plan is in [TODO.md](TODO.md).

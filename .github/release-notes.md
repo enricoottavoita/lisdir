@@ -10,6 +10,8 @@ tray icon menu → **Install index service (admin)…** once.
 The executables are not code-signed yet, so Windows SmartScreen may warn you: choose *More info → Run anyway*.
 Checksums are in `SHA256SUMS.txt`.
 
+Already installed? Use the tray icon menu → **Check for updates…**; lisdir also checks by itself once a day.
+
 ## Installazione
 
 1. Scarica **lisdir-setup-&lt;versione&gt;.exe** qui sotto ed eseguilo. Chiede i diritti di amministratore una
@@ -21,6 +23,9 @@ menu dell'icona, scegli **Installa servizio di indicizzazione (admin)…** una v
 
 Gli eseguibili non sono ancora firmati, quindi SmartScreen può mostrare un avviso: *Ulteriori informazioni →
 Esegui comunque*. I checksum sono in `SHA256SUMS.txt`.
+
+Hai già installato lisdir? Dal menu dell'icona scegli **Controlla aggiornamenti…**; lisdir controlla comunque da
+solo una volta al giorno.
 
 ## Notes / Note
 
