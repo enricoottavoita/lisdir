@@ -5,6 +5,7 @@ mod icons;
 mod query;
 mod service;
 mod typesearch;
+mod update;
 mod usage;
 
 use query::{Clock, Query};
@@ -38,6 +39,8 @@ struct App {
     busy: Arc<AtomicUsize>,
     /// set once the window really got focus after being shown; blur before that is a foreground-lock glitch, not a click-away
     focused: AtomicBool,
+    /// a newer release found by the update check, waiting for the user to accept it
+    update: std::sync::Mutex<Option<update::Update>>,
 }
 
 /// Keep a network volume current by periodically re-walking it. It is searchable from the cache
@@ -241,6 +244,42 @@ fn set_autostart(on: bool) {
     }
 }
 
+type Item = MenuItem<tauri::Wry>;
+
+fn set_item(item: &Item, text: String, enabled: bool) {
+    let _ = item.set_text(text);
+    let _ = item.set_enabled(enabled);
+}
+
+/// Ask GitHub for a newer release and show the answer in the tray menu. Background checks stay quiet unless something is found.
+fn check_update(app: &AppHandle, item: &Item, manual: bool) {
+    if manual {
+        set_item(item, t("Checking for updates…", "Controllo aggiornamenti…").into(), false);
+    }
+    match update::check() {
+        Ok(Some(u)) => {
+            set_item(item, format!("{} {}…", t("Update to", "Aggiorna a"), u.version), true);
+            *app.state::<App>().update.lock().unwrap() = Some(u);
+        }
+        Ok(None) if manual => set_item(item, t("lisdir is up to date", "lisdir è aggiornato").into(), true),
+        Err(_) if manual => set_item(item, t("Update check failed – retry", "Controllo non riuscito – riprova").into(), true),
+        _ => {}
+    }
+}
+
+/// Download and start the installer for the update the user accepted, then quit so it can replace this exe.
+fn install_update(app: &AppHandle, item: &Item) {
+    let Some(u) = app.state::<App>().update.lock().unwrap().take() else { return };
+    set_item(item, format!("{} {}…", t("Downloading", "Scarico"), u.version), false);
+    match update::install(&u) {
+        Ok(()) => app.exit(0),
+        Err(_) => {
+            set_item(item, t("Update failed – retry", "Aggiornamento non riuscito – riprova").into(), true);
+            *app.state::<App>().update.lock().unwrap() = Some(u);
+        }
+    }
+}
+
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("--helper") => return service::run_helper(),
@@ -265,6 +304,13 @@ fn main() {
             typesearch::start(app.handle().clone());
             let type_search = CheckMenuItem::with_id(app, "typesearch", t("Type to search in Explorer/Desktop", "Digita per cercare in Esplora risorse/Desktop"), true, true, None::<&str>)?;
             let autostart = CheckMenuItem::with_id(app, "autostart", t("Start with Windows", "Avvia con Windows"), true, reg(&["query", RUN_KEY, "/v", "lisdir"]), None::<&str>)?;
+            let update_item = MenuItem::with_id(app, "update", t("Check for updates…", "Controlla aggiornamenti…"), true, None::<&str>)?;
+            let (handle, item) = (app.handle().clone(), update_item.clone());
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(20)); // let startup settle first
+                check_update(&handle, &item, false);
+                std::thread::sleep(std::time::Duration::from_secs(24 * 3600));
+            });
             let menu = Menu::with_items(
                 app,
                 &[
@@ -273,6 +319,7 @@ fn main() {
                     &type_search,
                     &autostart,
                     &MenuItem::with_id(app, "roots", t("Network folders…", "Cartelle di rete…"), true, None::<&str>)?,
+                    &update_item,
                     &MenuItem::with_id(app, "install", t("Install index service (admin)…", "Installa servizio di indicizzazione (admin)…"), true, None::<&str>)?,
                     &MenuItem::with_id(app, "quit", t("Quit", "Esci"), true, None::<&str>)?,
                 ],
@@ -287,6 +334,12 @@ fn main() {
                     "typesearch" => typesearch::ENABLED.store(type_search.is_checked().unwrap_or(true), Ordering::SeqCst),
                     "autostart" => set_autostart(autostart.is_checked().unwrap_or(false)),
                     "roots" => edit_roots(),
+                    "update" => {
+                        let (app, item) = (app.clone(), update_item.clone());
+                        std::thread::spawn(move || {
+                            if app.state::<App>().update.lock().unwrap().is_some() { install_update(&app, &item) } else { check_update(&app, &item, true) }
+                        });
+                    }
                     "install" => service::request_install(),
                     "quit" => app.exit(0),
                     _ => {}

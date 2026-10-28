@@ -16,6 +16,7 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Ranking: name match first, modest boost for what you open often (0.13)
 - [x] Recent items before you type (`Del` removes one); matched letters highlighted (0.13)
 - [x] Latency budget test and a manual benchmark for millions of names (0.13)
+- [x] Update check and one-click update from the tray menu, verified by SHA-256
 
 ## 0.12.x — fixes first
 - [x] **Keep results when a network folder is unreachable** (a failed walk no longer replaces the index or cache)
@@ -73,7 +74,7 @@ unelevated, and every feature ships with a test or a measured check.
 - [ ] Clipboard history search and browser history search
 - [ ] Integration with third-party file managers
 - [ ] Network folders: change detection instead of periodic re-walk
-- [ ] Packaging and updates: winget and Scoop manifests, in-app update check
+- [ ] Packaging: winget and Scoop manifests
 - [ ] Code-signed executables (removes the SmartScreen warning)
 - [ ] Windows on ARM build
 

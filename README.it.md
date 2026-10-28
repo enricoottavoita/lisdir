@@ -77,6 +77,8 @@ Esegui comunque*.
 Altre cartelle di rete si aggiungono in `%LOCALAPPDATA%\lisdir\roots.txt`, un percorso per riga (dal menu
 dell'icona: **Cartelle di rete…**).
 
+**Aggiornamenti.** lisdir controlla ogni giorno le release su GitHub; se ce n'è una nuova, il menu dell'icona propone «Aggiorna a X.Y.Z…». Scarica l'installer, ne verifica lo SHA-256 con il file `SHA256SUMS.txt` pubblicato e lo avvia. Non installa nulla senza un tuo clic.
+
 ## Compilare
 
 Servono Windows 10/11 (64 bit), la toolchain [Rust](https://rustup.rs) (MSVC), gli strumenti di compilazione di Visual

@@ -51,8 +51,15 @@ Filename: "{sys}\reg.exe"; Parameters: "add HKCU\Software\Microsoft\Windows\Curr
 ; Register and start the elevated index helper (scheduled task at logon), then open the app as the normal user.
 Filename: "{app}\lisdir.exe"; Parameters: "--install"; Flags: runhidden waituntilterminated; StatusMsg: "{cm:InstallingService}"
 Filename: "{app}\lisdir.exe"; Description: "{cm:StartNow}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; Started by the in-app updater (silent install with /START=1).
+Filename: "{app}\lisdir.exe"; Flags: nowait runasoriginaluser; Check: StartRequested
 
 [Code]
+function StartRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:start|0}') = '1';
+end;
+
 // Stop a running copy (UI and elevated helper) so the exe can be replaced or removed.
 procedure StopLisdir;
 var

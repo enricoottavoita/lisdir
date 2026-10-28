@@ -106,8 +106,11 @@ that is signing in; installing with a different admin account's credentials is n
 
 The executables are not code-signed yet, so SmartScreen may warn: *More info → Run anyway*.
 
-Tray menu options: type-to-search on/off, start with Windows, edit network folders, install the service.
+Tray menu options: type-to-search on/off, start with Windows, edit network folders, check for updates, install the service.
+
 Extra network folders go in `%LOCALAPPDATA%\lisdir\roots.txt`, one path per line.
+
+**Updates.** lisdir checks the GitHub releases daily; when a newer one exists the tray menu offers "Update to X.Y.Z…". It downloads the installer, verifies its SHA-256 against the published `SHA256SUMS.txt`, and starts it. Nothing is installed without your click.
 
 To build the installer yourself: install [Inno Setup 6](https://jrsoftware.org/isinfo.php), build the release
 binary, then run `ISCC /DMyVersion=<version> installer\lisdir.iss` (output in `dist\`). Pushing a `v*` tag

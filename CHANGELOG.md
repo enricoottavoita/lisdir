@@ -10,6 +10,12 @@ when releasing.
 
 ## [Unreleased]
 
+### Added
+- Updates from the tray menu: lisdir checks the GitHub releases a few seconds after start and then daily, and the
+  menu shows **Update to X.Y.Z…** when a newer one exists. Clicking it downloads the installer, verifies its
+  SHA-256 against `SHA256SUMS.txt`, and starts it (Windows asks for permission); lisdir restarts afterwards.
+  Nothing is installed without a click. The installer accepts `/START=1` for this silent run.
+
 ## [0.13.1] - 2026-10-28
 
 ### Fixed
