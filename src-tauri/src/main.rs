@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(any(debug_assertions, test)), windows_subsystem = "windows")]
 mod apps;
 mod engine;
 mod icons;
