@@ -26,11 +26,6 @@ unelevated, and every feature ships with a test or a measured check.
       flat list: a text search over 1.6 million entries takes 35–60 ms (0.14.2)
 - [x] Folder sizes (sum of their files, kept current); the portable exe updates itself in place (0.14.3)
 
-## Next up (small)
-- [ ] Option to turn off the daily update check (belongs in the settings window, 0.16)
-- [ ] If search ever feels slow again: keep lowercase names in one byte buffer (no pointer per name) and/or a
-      3-letter index
-
 ## 0.15 — actions and preview
 - [ ] Action menu on a result (`Ctrl+O`, right arrow, right click) with shortcut hints in the footer
 - [ ] Copy / cut a file to the clipboard (`Ctrl+C`, `Ctrl+X`), copy path, open with, open terminal here, properties
@@ -40,6 +35,7 @@ unelevated, and every feature ships with a test or a measured check.
 ## 0.16 — settings and control
 - [ ] Settings window: configurable hotkey (including double-tap `Ctrl`; reject plain character keys such as
       `Space` alone), language override, theme presets, hide the tray icon
+- [ ] Option to turn off the daily update check
 - [ ] Choose which folders are indexed
 - [ ] **Exclude from results** (still indexed, hidden from results) and **do not index** rules
       (`node_modules`, `.git`, caches)
@@ -71,6 +67,8 @@ unelevated, and every feature ships with a test or a measured check.
 - [ ] Command line: `lisdir --search "query"` prints results through the existing pipe (scripts and agents)
 - [ ] Optional local search API for scripts and AI tools, off by default, bound to localhost with a token
 - [ ] Clipboard history search and browser history search
+- [ ] If search ever feels slow again: keep lowercase names in one byte buffer (no pointer per name) and/or a
+      3-letter index (today 35–60 ms over 1.6 million entries, so not needed yet)
 - [ ] Integration with third-party file managers
 - [ ] Network folders: change detection instead of periodic re-walk
 - [ ] Packaging: winget and Scoop manifests
