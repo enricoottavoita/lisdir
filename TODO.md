@@ -29,6 +29,7 @@ unelevated, and every feature ships with a test or a measured check.
       pinned results (`Ctrl+P`) (0.15)
 
 ## 0.16 — settings and control
+- [x] Dates in words: `date:3d`, `date:monday`, `date:lastweek`, and the Italian forms (`date:ieri`, `date:lunedì`)
 - [ ] Settings window: configurable hotkey (including double-tap `Ctrl`; reject plain character keys such as
       `Space` alone), language override, theme presets, hide the tray icon
 - [ ] Option to turn off the daily update check
@@ -52,6 +53,7 @@ unelevated, and every feature ships with a test or a measured check.
       unsupported file system, helper not running, network folder not yet walked, and how to fix it
 - [ ] About page: item counts, per-volume status, last walk times, and a small built-in speed test
 - [ ] Tell the user when settings cannot be saved
+- [ ] Measure the memory used by the UI and the helper with 1.6 million entries and state it in the README
 
 ## Later
 - [ ] Quick Save & Open: in Open/Save dialogs, jump to a recent folder, a searched folder, the folder you click in
@@ -62,6 +64,9 @@ unelevated, and every feature ships with a test or a measured check.
 - [ ] Mini calculator in the bar (`12*(3+4)`)
 - [ ] Command line: `lisdir --search "query"` prints results through the existing pipe (scripts and agents)
 - [ ] Optional local search API for scripts and AI tools, off by default, bound to localhost with a token
+- [ ] Read-only MCP server (`lisdir --mcp`, over stdio) built on the command line search, so AI assistants can find
+      files; search only, never open or change anything
+- [ ] Community files: `SECURITY.md` (how to report a vulnerability) and `CODE_OF_CONDUCT.md`
 - [ ] Clipboard history search and browser history search
 - [ ] If search ever feels slow again: keep lowercase names in one byte buffer (no pointer per name) and/or a
       3-letter index (today 35–60 ms over 1.6 million entries, so not needed yet)

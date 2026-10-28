@@ -56,10 +56,14 @@ Le parole semplici cercano nei nomi dei file; il resto restringe i risultati. Si
 | `doc:` `pic:` `video:` `music:` `zip:` | un'intera categoria di tipi di file |
 | `date:today`, `yesterday`, `week`, `month`, `year` | modificati oggi / ieri / negli ultimi 7, 30, 365 giorni |
 | `date:2026`, `date:2026-07`, `date:2026-07-31` | modificati in quell'anno / mese / giorno |
+| `date:oggi`, `ieri`, `settimana`, `mese`, `anno` | come `today`, `yesterday`, `week`, `month`, `year` |
+| `date:3g`, `2s`, `6m`, `1a` (o `3d`, `2w`, `1y`) | modificati negli ultimi 3 giorni / 2 settimane / 6 mesi / 1 anno |
+| `date:lunedì` (o `lun`, `monday`) | modificati l'ultimo lunedì (oggi, se è lunedì) |
+| `date:settimana-scorsa`, `mese-scorso`, `anno-scorso` | modificati nella settimana (lun–dom) / mese / anno precedente |
 | `size:>1gb`, `size:<10mb`, `size:10mb..1gb`, `size:empty` | dimensione del file (`>` `>=` `<` `<=`, un intervallo, o vuoto); unità kb mb gb tb |
 | `app:` | solo app |
 
-Le parole chiave sono in inglese, qualunque sia la lingua dell'interfaccia. `date:` e `size:` usano la data di
+Le parole chiave sono in inglese, qualunque sia la lingua dell'interfaccia (le date si possono scrivere anche in italiano). `date:` e `size:` usano la data di
 modifica e la dimensione del file, lette dal record NTFS (per le cartelle di rete, dall'elenco della cartella). Un
 filtro `size:` trova solo file. Parole e filtri si combinano: `relazione ext:pdf date:month -bozza`. Con soli filtri
 e nessuna parola, i file più recenti vengono per primi; con `size:`, i più grandi.

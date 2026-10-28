@@ -10,6 +10,11 @@ when releasing.
 
 ## [Unreleased]
 
+### Added
+- Dates in words: `date:3d`, `2w`, `6m`, `1y` (the last N days, weeks, months, years); a weekday such as
+  `date:monday` (the most recent one); `date:lastweek`, `lastmonth`, `lastyear` (the previous calendar week, month,
+  year). Italian works too: `date:oggi`, `ieri`, `3g`, `2s`, `lunedì`, `settimana-scorsa`, `mese-scorso`.
+
 ## [0.15.0] - 2026-10-28
 
 ### Added

@@ -57,6 +57,9 @@ Plain words match file names; everything else narrows the results. All of it can
 | `doc:` `pic:` `video:` `music:` `zip:` | a whole category of file types |
 | `date:today`, `yesterday`, `week`, `month`, `year` | modified today / yesterday / in the last 7, 30, 365 days |
 | `date:2026`, `date:2026-07`, `date:2026-07-31` | modified in that year / month / day |
+| `date:3d`, `2w`, `6m`, `1y` | modified in the last 3 days / 2 weeks / 6 months / 1 year |
+| `date:monday` (or `mon`) | modified on the most recent Monday (today, if today is Monday) |
+| `date:lastweek`, `lastmonth`, `lastyear` | modified in the previous calendar week (Mon–Sun) / month / year |
 | `size:>1gb`, `size:<10mb`, `size:10mb..1gb`, `size:empty` | file size (`>` `>=` `<` `<=`, a range, or empty); units kb mb gb tb |
 | `app:` | apps only |
 

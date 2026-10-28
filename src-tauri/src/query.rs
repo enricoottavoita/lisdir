@@ -10,6 +10,10 @@
 //! | `doc:` `pic:` `video:` `music:` `zip:` | a whole category of extensions        |
 //! | `app:`                  | only apps                                            |
 //! | `date:today` ...        | last modified: today, yesterday, week, month, year (rolling 7/30/365 days), or `2026`, `2026-07`, `2026-07-31` |
+//! | `date:3d` `2w` `6m` `1y` | the last N days / weeks / months (30 days) / years (365); Italian `g` `s` `m` `a` too |
+//! | `date:monday`, `date:lunedì` | the most recent such day (today if it is one) |
+//! | `date:lastweek` `lastmonth` `lastyear` | the previous calendar week (Mon–Sun) / month / year |
+//! | `oggi` `ieri` `settimana` `mese` `anno`, `settimana-scorsa` `mese-scorso` `anno-scorso` | Italian keywords |
 //! | `size:>1gb`, `size:10mb..1gb`, `size:empty` | file size: `>` `>=` `<` `<=`, a range, or `empty`; units b kb mb gb tb (1024) |
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
@@ -116,6 +120,28 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
 }
 
+/// The inverse of `days_from_civil`: (year, month, day).
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let (d, m) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    (yoe + era * 400 + (m <= 2) as i64, m, d)
+}
+
+const WEEKDAYS: [&[&str]; 7] = [
+    &["monday", "mon", "lunedì", "lunedi", "lun"],
+    &["tuesday", "tue", "martedì", "martedi", "mar"],
+    &["wednesday", "wed", "mercoledì", "mercoledi", "mer"],
+    &["thursday", "thu", "giovedì", "giovedi", "gio"],
+    &["friday", "fri", "venerdì", "venerdi", "ven"],
+    &["saturday", "sat", "sabato", "sab"],
+    &["sunday", "sun", "domenica", "dom"],
+];
+
 /// "1.5gb", "300", "2k" to bytes. Binary units (1 kb = 1024 bytes), like Explorer.
 fn bytes(v: &str) -> Option<u64> {
     let at = v.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(v.len());
@@ -162,12 +188,32 @@ fn size_range(v: &str) -> Option<(u64, u64)> {
 fn date_range(v: &str, c: &Clock) -> Option<(i64, i64)> {
     let t = c.today();
     let local = |y, m, d| days_from_civil(y, m, d) * DAY - c.offset;
-    Some(match v {
-        "today" => (t, t + DAY),
-        "yesterday" => (t - DAY, t),
-        "week" => (t - 6 * DAY, t + DAY),
-        "month" => (t - 29 * DAY, t + DAY),
-        "year" => (t - 364 * DAY, t + DAY),
+    let (y, m, _) = civil_from_days((c.now + c.offset).div_euclid(DAY));
+    let wd = ((c.now + c.offset).div_euclid(DAY) + 3).rem_euclid(7); // 1970-01-01 was a Thursday; Monday = 0
+    let last = |days: i64| (t - (days - 1) * DAY, t + DAY);
+    if let Some(i) = WEEKDAYS.iter().position(|names| names.contains(&v)) {
+        let back = (wd - i as i64).rem_euclid(7);
+        return Some((t - back * DAY, t - back * DAY + DAY));
+    }
+    if let Some(at) = v.find(|ch: char| !ch.is_ascii_digit()).filter(|&at| at > 0 && v[at..].chars().all(char::is_alphabetic)) {
+        let n: i64 = v[..at].parse().ok().filter(|&n| n <= 100_000)?;
+        return Some(last(n * match &v[at..] {
+            "d" | "g" => 1,
+            "w" | "s" => 7,
+            "m" => 30,
+            "y" | "a" => 365,
+            _ => return None,
+        }));
+    }
+    Some(match v.replace(['-', '_'], "").as_str() {
+        "today" | "oggi" => (t, t + DAY),
+        "yesterday" | "ieri" => (t - DAY, t),
+        "week" | "settimana" => last(7),
+        "month" | "mese" => last(30),
+        "year" | "anno" => last(365),
+        "lastweek" | "settimanascorsa" => (t - (wd + 7) * DAY, t - wd * DAY),
+        "lastmonth" | "mesescorso" => (if m == 1 { local(y - 1, 12, 1) } else { local(y, m - 1, 1) }, local(y, m, 1)),
+        "lastyear" | "annoscorso" => (local(y - 1, 1, 1), local(y, 1, 1)),
         _ => {
             let n = v.split('-').map(|p| p.parse::<i64>().ok()).collect::<Option<Vec<_>>>()?;
             if !(1970..=2100).contains(n.first()?) {
@@ -320,5 +366,28 @@ mod tests {
         assert_eq!(p("date:2023").date.map(|d| d.1 - d.0), Some(365 * DAY));
         assert_eq!(p("date:nonsense").date, None);
         assert_eq!(p("date:2023-13").date, None);
+    }
+
+    #[test]
+    fn natural_dates() {
+        for z in [0, 11_017, 19_675, -1, 50_000] {
+            assert_eq!(days_from_civil(civil_from_days(z).0, civil_from_days(z).1, civil_from_days(z).2), z);
+        }
+        let t = days_from_civil(2023, 11, 14) * DAY - 3600; // CLOCK's local today is Tuesday 2023-11-14
+        assert_eq!(p("date:3d").date, Some((t - 2 * DAY, t + DAY)));
+        assert_eq!(p("date:1w").date, p("date:week").date);
+        assert_eq!(p("date:2s").date, Some((t - 13 * DAY, t + DAY)));
+        assert_eq!(p("date:1y").date, p("date:anno").date);
+        assert_eq!(p("date:oggi").date, p("date:today").date);
+        assert_eq!(p("date:Tuesday").date, Some((t, t + DAY))); // today counts
+        assert_eq!(p("date:lunedì").date, Some((t - DAY, t)));
+        assert_eq!(p("date:wed").date, Some((t - 6 * DAY, t - 5 * DAY)));
+        assert_eq!(p("date:lastweek").date, Some((t - 8 * DAY, t - DAY))); // Mon Nov 6 .. Mon Nov 13
+        assert_eq!(p("date:settimana-scorsa").date, p("date:last-week").date);
+        let oct = days_from_civil(2023, 10, 1) * DAY - 3600;
+        assert_eq!(p("date:lastmonth").date, Some((oct, oct + 31 * DAY)));
+        assert_eq!(p("date:anno-scorso").date, p("date:2022").date);
+        assert_eq!(p("date:3x").date, None);
+        assert_eq!(p("date:99999999999d").date, None);
     }
 }
