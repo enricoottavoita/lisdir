@@ -53,7 +53,102 @@ impl Entry {
     }
 }
 
-pub type Index = HashMap<u64, Entry>;
+/// Holes left by removed entries are squeezed out once there are this many (and over an eighth of the vector).
+const COMPACT_MIN: usize = 10_000;
+
+/// The entries of a volume by file reference number. They live in one flat vector (plus a lookup table), so a
+/// search walks them in order and can hand slices to several threads, which a hash map does not allow. A removed
+/// entry leaves a hole that is cleaned up later.
+#[derive(Default)]
+pub struct Index {
+    slot: HashMap<u64, u32>,
+    items: Vec<(u64, Option<Entry>)>,
+}
+
+impl Index {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_capacity(n: usize) -> Self {
+        Index { slot: HashMap::with_capacity(n), items: Vec::with_capacity(n) }
+    }
+
+    pub fn len(&self) -> usize {
+        self.slot.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slot.is_empty()
+    }
+
+    pub fn contains_key(&self, frn: &u64) -> bool {
+        self.slot.contains_key(frn)
+    }
+
+    pub fn get(&self, frn: &u64) -> Option<&Entry> {
+        self.slot.get(frn).and_then(|&i| self.items[i as usize].1.as_ref())
+    }
+
+    pub fn get_mut(&mut self, frn: &u64) -> Option<&mut Entry> {
+        let i = *self.slot.get(frn)?;
+        self.items[i as usize].1.as_mut()
+    }
+
+    pub fn insert(&mut self, frn: u64, e: Entry) -> Option<Entry> {
+        if let Some(&i) = self.slot.get(&frn) {
+            return self.items[i as usize].1.replace(e);
+        }
+        self.slot.insert(frn, self.items.len() as u32);
+        self.items.push((frn, Some(e)));
+        None
+    }
+
+    pub fn remove(&mut self, frn: &u64) -> Option<Entry> {
+        let old = self.items[self.slot.remove(frn)? as usize].1.take();
+        let holes = self.items.len() - self.slot.len();
+        if holes >= COMPACT_MIN && holes * 8 > self.items.len() {
+            self.items.retain(|x| x.1.is_some());
+            for (i, (f, _)) in self.items.iter().enumerate() {
+                self.slot.insert(*f, i as u32);
+            }
+        }
+        old
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &u64> {
+        self.slot.keys()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&u64, &Entry)> {
+        self.items.iter().filter_map(|(f, e)| e.as_ref().map(|e| (f, e)))
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Entry> {
+        self.items.iter().filter_map(|(_, e)| e.as_ref())
+    }
+
+    pub fn extend(&mut self, entries: impl IntoIterator<Item = (u64, Entry)>) {
+        for (f, e) in entries {
+            self.insert(f, e);
+        }
+    }
+}
+
+impl std::ops::Index<&u64> for Index {
+    type Output = Entry;
+    fn index(&self, frn: &u64) -> &Entry {
+        self.get(frn).expect("no entry with this file reference")
+    }
+}
+
+impl FromIterator<(u64, Entry)> for Index {
+    fn from_iter<I: IntoIterator<Item = (u64, Entry)>>(it: I) -> Self {
+        let mut idx = Index::new();
+        idx.extend(it);
+        idx
+    }
+}
 
 /// One volume's index plus the journal position it is current up to.
 pub struct Volume {
@@ -294,7 +389,7 @@ fn write_cache(v: &Volume) -> io::Result<()> {
     b.extend(v.journal_id.to_le_bytes());
     b.extend(v.next_usn.to_le_bytes());
     b.extend((v.idx.len() as u64).to_le_bytes());
-    for (frn, e) in &v.idx {
+    for (frn, e) in v.idx.iter() {
         b.extend(frn.to_le_bytes());
         b.extend(e.parent.to_le_bytes());
         b.extend(e.time.to_le_bytes());
@@ -693,15 +788,15 @@ pub fn search(idx: &Index, q: &Query, limit: usize) -> Vec<(f32, u64)> {
         }
         hits
     };
-    let scan = |part: &[(&u64, &Entry)]| top(part.iter().filter_map(|&(&f, e)| matches(q, idx, e).map(|s| (s, f))).collect());
+    let scan = |part: &[(u64, Option<Entry>)]| {
+        top(part.iter().filter_map(|(f, e)| matches(q, idx, e.as_ref()?).map(|s| (s, *f))).collect())
+    };
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
     let mut hits = if idx.len() < PARALLEL_FROM || threads == 1 {
-        top(idx.iter().filter_map(|(&f, e)| matches(q, idx, e).map(|s| (s, f))).collect())
+        scan(&idx.items)
     } else {
-        // a hash map cannot be split, so list the entries once and give each thread a slice
-        let all: Vec<(&u64, &Entry)> = idx.iter().collect();
         let parts: Vec<Vec<(f32, u64)>> = std::thread::scope(|s| {
-            let jobs: Vec<_> = all.chunks(all.len().div_ceil(threads)).map(|c| s.spawn(|| scan(c))).collect();
+            let jobs: Vec<_> = idx.items.chunks(idx.items.len().div_ceil(threads)).map(|c| s.spawn(|| scan(c))).collect();
             jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
         });
         top(parts.into_iter().flatten().collect())
@@ -951,6 +1046,29 @@ mod tests {
         assert!(!log_is_big("Y:"));
         let _ = std::fs::remove_file(cache_path("Y:"));
         let _ = std::fs::remove_file(log);
+    }
+
+    #[test]
+    fn index_survives_removals_and_compaction() {
+        let mut i = Index::new();
+        let n = COMPACT_MIN as u64 * 4;
+        for k in 0..n {
+            i.insert(k, Entry::new(0, format!("f{k}"), false, 0));
+        }
+        assert!(i.insert(5, Entry::new(0, "renamed".into(), false, 0)).is_some()); // replaced in place
+        for k in 0..n / 2 {
+            assert!(i.remove(&k).is_some()); // enough holes to trigger a compaction along the way
+        }
+        assert!(i.remove(&0).is_none());
+        assert_eq!(i.len(), n as usize / 2);
+        assert_eq!(i.iter().count(), n as usize / 2);
+        assert!(i.items.len() < n as usize, "holes were squeezed out");
+        assert_eq!(i[&(n - 1)].name, format!("f{}", n - 1));
+        assert!(i.get(&(n / 2 - 1)).is_none() && i.get(&(n / 2)).is_some());
+        i.get_mut(&(n / 2)).unwrap().size = 9;
+        assert_eq!(i[&(n / 2)].size, 9);
+        i.insert(3, Entry::new(0, "again".into(), false, 0)); // a removed key can come back
+        assert!(i.contains_key(&3) && i.keys().count() == n as usize / 2 + 1);
     }
 
     #[test]

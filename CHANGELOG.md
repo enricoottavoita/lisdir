@@ -10,10 +10,15 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-28
+
 ### Added
 - File sizes are shown at the right of each result (folders and files of unknown size show nothing).
 
 ### Changed
+- Searches are faster again: entries are kept in one flat list that is split across the cores, instead of a hash
+  map that had to be listed first. On 1.6 million entries a text search now takes about 35–60 ms (was 60–90 ms),
+  `date:` and `size:` about 10–15 ms.
 - The index cache is no longer rewritten every minute while files change. Changes are appended to a small log
   next to the cache and replayed at startup; the full cache is rewritten only when the log passes 16 MB, every
   six hours, or after a rescan. Less disk writing on a busy machine.
@@ -127,7 +132,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/enricoottavoita/lisdir/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/enricoottavoita/lisdir/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/enricoottavoita/lisdir/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/enricoottavoita/lisdir/compare/v0.13.1...v0.13.2

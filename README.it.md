@@ -11,7 +11,7 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 
 - **Ricerca istantanea su milioni di file.** I dischi NTFS locali sono indicizzati leggendo direttamente la MFT,
   senza scorrere le cartelle, molto più veloce di una scansione delle cartelle. Misurato su 1,6 milioni di voci (due dischi): una ricerca di
-  testo richiede circa 60–90 ms; i filtri come `date:` e `size:` circa 20 ms.
+  testo richiede circa 35–60 ms; i filtri come `date:` e `size:` circa 10–15 ms.
 - **Sempre aggiornato.** L'indice segue il journal USN di NTFS (controllato ogni secondo): file creati, rinominati,
   spostati o eliminati compaiono entro un paio di secondi. L'indice è salvato su disco, quindi a ogni riavvio
   recupera solo ciò che è cambiato.

@@ -27,8 +27,8 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] `size:>1gb` / `size:10mb..1gb` filter (sizes read from the NTFS file records; from the directory listing for network folders)
 - [x] Exact `date:` on NTFS from the file record's modified time
 - [x] Show sizes in the results
-- [ ] Search faster still: a text search over 1.6 million entries takes 60–90 ms, most of it listing the hash
-      map. Keep names in one flat array (and maybe a 3-letter index) if that starts to feel slow
+- [x] Search faster still: entries in one flat list split across the cores (35–60 ms for 1.6 million entries)
+- [ ] If that is still too slow: keep lowercase names in one byte buffer (no pointer per name) and/or a 3-letter index
 - [x] Save only what changed: changes are appended to a log, the cache is rewritten rarely (no database needed)
 - [x] Clear all recent items at once
 - [x] Search on several cores; cache saved without pausing searches (0.14.1)

@@ -11,7 +11,7 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 
 - **Instant search over millions of files.** Local NTFS volumes are indexed by reading the MFT directly,
   not by walking directories, which is far faster than scanning folders. Measured on 1.6 million entries
-  (two disks): a text search takes about 60–90 ms; filters such as `date:` and `size:` about 20 ms.
+  (two disks): a text search takes about 35–60 ms; filters such as `date:` and `size:` about 10–15 ms.
 - **Always current.** The index follows the NTFS USN journal (checked every second): files you create, rename,
   move or delete show up within a couple of seconds. The index is cached on disk, so a restart only has to catch
   up on what changed.
