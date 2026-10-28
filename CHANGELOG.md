@@ -10,6 +10,8 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-28
+
 ### Added
 - App launcher: Start menu and Microsoft Store apps are found by the same fuzzy search as files and ranked together
   with them (an app outranks a file with an equally good name match). Apps show their own icon and open with
@@ -48,6 +50,7 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/enricoottavoita/lisdir/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/enricoottavoita/lisdir/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/enricoottavoita/lisdir/releases/tag/v0.10.0

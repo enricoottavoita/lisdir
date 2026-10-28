@@ -2,13 +2,15 @@
 
 Planned work, roughly in order. Tick items as they ship and move them into [CHANGELOG.md](CHANGELOG.md).
 
-## 0.12 — launcher and ranking
-- [x] App launcher: Start menu and Store apps searched together with files and ranked together
+## Done
+- [x] App launcher: Start menu and Store apps searched together with files and ranked together (0.12)
+- [x] File-type icons in results (0.12)
+
+## Next — ranking and filters
 - [ ] Rank by habit: items you open often (and exact matches) float to the top
 - [ ] Narrow by folder with a trailing `\` (`docs\ report` = "report" inside a folder matching "docs")
 - [ ] Filters by file type and date (also usable as prefixes, e.g. `ext:pdf`, `folder:`)
 - [ ] Highlight the matched letters in each result
-- [x] File-type icons in results
 
 ## 0.13 — actions and preview
 - [ ] Action menu on a result (`Ctrl+O`, right arrow, right click): copy, copy path, open with, open terminal here, properties
