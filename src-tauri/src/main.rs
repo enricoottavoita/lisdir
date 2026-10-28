@@ -40,18 +40,24 @@ struct App {
 // ponytail: results of a walk appear only when it completes; stream into the index if first-run latency matters.
 fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
     let root = vol.read().unwrap().root.clone();
+    let mut wait = engine::WALK_INTERVAL;
     loop {
         if stale {
             busy.fetch_add(1, Ordering::SeqCst);
-            let idx = engine::walk(&root);
-            let mut v = vol.write().unwrap();
-            v.idx = idx;
-            v.dirty = true;
-            let _ = engine::save(&mut v);
-            drop(v);
+            let w = engine::walk(&root);
+            if w.reliable() {
+                let mut v = vol.write().unwrap();
+                v.idx = w.idx;
+                v.dirty = true;
+                let _ = engine::save(&mut v);
+                wait = engine::WALK_INTERVAL;
+            } else {
+                // share offline or drive unplugged: keep the old results (and cache) and retry soon
+                wait = engine::RETRY_INTERVAL;
+            }
             busy.fetch_sub(1, Ordering::SeqCst);
         }
-        std::thread::sleep(engine::WALK_INTERVAL);
+        std::thread::sleep(wait);
         stale = true;
     }
 }

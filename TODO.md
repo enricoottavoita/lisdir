@@ -13,9 +13,7 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] File-type icons in results (0.12)
 
 ## 0.12.x — fixes first
-- [ ] **Keep results when a network folder is unreachable.** Today a failed walk replaces the index (and the cache)
-      with an empty one, so a powered-off NAS loses all its results. Keep the old index when the walk fails or
-      comes back empty; the same applies to removable drives that are unplugged
+- [x] **Keep results when a network folder is unreachable** (a failed walk no longer replaces the index or cache)
 - [ ] Show network results while the first walk is still running (stream entries into the index)
 - [ ] Refresh the app list when the Start menu changes, not only at startup
 

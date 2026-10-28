@@ -10,6 +10,11 @@ when releasing.
 
 ## [Unreleased]
 
+### Fixed
+- A network folder that is offline (powered-off NAS, dropped VPN, unplugged drive) no longer loses its search
+  results: a walk that failed on more than 2% of the folders, or could not read the root, is discarded, the old
+  index and cache are kept, and lisdir retries after a minute instead of ten.
+
 ## [0.12.0] - 2026-10-28
 
 ### Added

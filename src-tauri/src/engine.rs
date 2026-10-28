@@ -298,13 +298,34 @@ pub fn open_walk(root: &str) -> (Volume, bool) {
     (v, fresh)
 }
 
+/// How soon to retry a walk that could not be trusted (share offline, drive unplugged).
+pub const RETRY_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Result of a directory walk, with enough bookkeeping to tell a real listing from one cut short by an
+/// unreachable share.
+pub struct Walk {
+    pub idx: Index,
+    dirs: usize,
+    failed: usize,
+}
+
+impl Walk {
+    /// Safe to replace the previous index with. "Access denied" folders are normal and do not count; any other
+    /// read failure does, and a walk where more than 2% of the folders failed (or the root itself) is rejected,
+    /// so an offline NAS never wipes its old results.
+    pub fn reliable(&self) -> bool {
+        self.failed == 0 || self.failed * 50 < self.dirs
+    }
+}
+
 /// Walk a directory tree with a pool of threads (SMB is latency-bound, not bandwidth-bound).
 /// Ids are synthetic; 0 is the root. Symlinks are listed but not followed.
-pub fn walk(root: &str) -> Index {
+pub fn walk(root: &str) -> Walk {
     let idx = Mutex::new(Index::new());
     let next_id = AtomicU64::new(1);
     let queue = Mutex::new(vec![(0u64, PathBuf::from(format!("{root}\\")))]);
     let pending = AtomicUsize::new(1); // directories queued or being read
+    let (dirs, failed) = (AtomicUsize::new(0), AtomicUsize::new(0));
     std::thread::scope(|s| {
         for _ in 0..16 {
             s.spawn(|| loop {
@@ -317,15 +338,22 @@ pub fn walk(root: &str) -> Index {
                     continue;
                 };
                 let mut found = vec![];
-                if let Ok(rd) = std::fs::read_dir(&dir) {
-                    for e in rd.flatten() {
-                        let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
-                        let id = next_id.fetch_add(1, SeqCst);
-                        if is_dir {
-                            pending.fetch_add(1, SeqCst);
-                            queue.lock().unwrap().push((id, e.path()));
+                dirs.fetch_add(1, SeqCst);
+                match std::fs::read_dir(&dir) {
+                    Ok(rd) => {
+                        for e in rd.flatten() {
+                            let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+                            let id = next_id.fetch_add(1, SeqCst);
+                            if is_dir {
+                                pending.fetch_add(1, SeqCst);
+                                queue.lock().unwrap().push((id, e.path()));
+                            }
+                            found.push((id, Entry::new(parent, e.file_name().to_string_lossy().into_owned(), is_dir)));
                         }
-                        found.push((id, Entry::new(parent, e.file_name().to_string_lossy().into_owned(), is_dir)));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+                    Err(_) => {
+                        failed.fetch_add(1, SeqCst);
                     }
                 }
                 idx.lock().unwrap().extend(found);
@@ -333,7 +361,7 @@ pub fn walk(root: &str) -> Index {
             });
         }
     });
-    idx.into_inner().unwrap()
+    Walk { idx: idx.into_inner().unwrap(), dirs: dirs.into_inner(), failed: failed.into_inner() }
 }
 
 // ---- search
@@ -441,10 +469,26 @@ mod tests {
         std::fs::write(root.join("a").join("b").join("deep file.txt"), b"x").unwrap();
         std::fs::write(root.join("top.txt"), b"x").unwrap();
         let r = root.to_str().unwrap();
-        let idx = walk(r);
+        let w = walk(r);
+        assert!(w.reliable());
+        let idx = w.idx;
         assert_eq!(idx.len(), 4); // a, b, deep file.txt, top.txt
         let hit = search(&idx, "deepf", 5)[0].1;
         assert_eq!(full_path(&idx, hit, r), format!("{r}\\a\\b\\deep file.txt"));
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn unreachable_walk_is_not_trusted() {
+        // a share that is offline: the root itself cannot be read
+        let w = walk(r"\\lisdir-no-such-host-0\nothing");
+        assert!(w.idx.is_empty());
+        assert!(!w.reliable());
+        // a missing local folder behaves the same way
+        assert!(!walk(r"C:\lisdir-no-such-folder-0").reliable());
+        // the 2% rule: a few vanished folders are fine, a mass failure is not
+        let few = Walk { idx: Index::new(), dirs: 1000, failed: 10 };
+        let many = Walk { idx: Index::new(), dirs: 1000, failed: 200 };
+        assert!(few.reliable() && !many.reliable());
     }
 }
