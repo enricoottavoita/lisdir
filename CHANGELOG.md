@@ -10,6 +10,15 @@ when releasing.
 
 ## [Unreleased]
 
+### Added
+- File-type icons in the result list, taken from Windows itself (the same icons Explorer shows), so videos,
+  photos, documents, archives, folders and programs are recognisable at a glance. Icons are looked up by file
+  type without opening the file, so they are instant even on network shares; programs and shortcuts show their
+  own icon.
+
+### Changed
+- The footer of the search bar no longer overlaps the last result when its text wraps to two lines.
+
 ## [0.11.0] - 2026-10-28
 
 ### Added

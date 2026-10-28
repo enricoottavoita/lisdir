@@ -18,6 +18,7 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 - **Type to search.** With an Explorer folder or the desktop focused, typing letters opens the bar with those
   letters already entered (toggle it in the tray menu).
 - **Fuzzy matching.** `lsrysvc` finds `Listary.Service.exe`; word starts and consecutive letters score higher.
+- **File-type icons.** Results show the same icons as Explorer, so videos, photos, documents and archives stand out.
 - **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
 - **No admin UI.** The bar runs as a normal user; only a small background helper is elevated.
 - **English and Italian.** The language follows your Windows display language (set `LISDIR_LANG=it` or `en` to

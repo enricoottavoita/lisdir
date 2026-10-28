@@ -6,12 +6,15 @@
   @media (prefers-color-scheme: light) { :root { --bg:#fafafa; --fg:#1d1d1f; --dim:#6b6e76; --sel:#e6e8ee; --line:#dcdde2; } }
   * { box-sizing:border-box }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:15px "Segoe UI",sans-serif; overflow:hidden }
+  body { display:flex; flex-direction:column }
   #q { width:100%; padding:16px 18px; font:inherit; font-size:20px; color:inherit; background:transparent; border:0; border-bottom:1px solid var(--line); outline:0 }
-  #list { height:calc(100% - 92px); overflow-y:auto; margin:0; padding:6px; list-style:none }
-  li { padding:7px 12px; border-radius:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  #list { flex:1; min-height:0; overflow-y:auto; margin:0; padding:6px; list-style:none }
+  li { display:flex; align-items:center; gap:10px; padding:6px 12px; border-radius:6px; white-space:nowrap }
+  li .ic { width:24px; height:24px; flex:none }
+  li .tx { min-width:0; overflow:hidden; text-overflow:ellipsis }
   li.sel { background:var(--sel) }
   li small { display:block; color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis }
-  #bar { position:fixed; bottom:0; left:0; right:0; padding:8px 18px; color:var(--dim); font-size:12px; border-top:1px solid var(--line); background:var(--bg) }
+  #bar { flex:none; padding:8px 18px; color:var(--dim); font-size:12px; border-top:1px solid var(--line); background:var(--bg) }
 </style>
 <input id="q" placeholder="Search files and folders…" autofocus autocomplete="off" spellcheck="false">
 <ul id="list"></ul>
@@ -38,14 +41,33 @@ function applyLang() {
 applyLang();
 invoke('lang').then(l => { S = STR[l] || STR.en; applyLang(); poll(); });
 
+// One blob URL per icon key (file type), shared by every result of that type.
+const iconCache = new Map();
+function iconUrl(h) {
+  let p = iconCache.get(h.icon);
+  if (!p) {
+    p = invoke('icon', { key: h.icon, path: h.path })
+      .then(png => URL.createObjectURL(new Blob([png], { type: 'image/png' })))
+      .catch(() => { iconCache.delete(h.icon); return ''; }); // don't remember failures: retry on the next render
+    iconCache.set(h.icon, p);
+  }
+  return p;
+}
+
 function render() {
   list.replaceChildren(...hits.map((h, i) => {
     const li = document.createElement('li');
     li.className = i === sel ? 'sel' : '';
-    li.append((h.is_dir ? '📁 ' : '📄 ') + h.name);
+    const img = document.createElement('img');
+    img.className = 'ic';
+    iconUrl(h).then(u => { if (u) img.src = u; else img.style.visibility = 'hidden'; });
+    const tx = document.createElement('div');
+    tx.className = 'tx';
+    tx.append(h.name);
     const s = document.createElement('small');
     s.textContent = h.path;
-    li.append(s);
+    tx.append(s);
+    li.append(img, tx);
     li.onclick = () => go(i, false);
     return li;
   }));

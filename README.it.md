@@ -19,6 +19,8 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
   apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona).
 - **Ricerca approssimata.** `lsrysvc` trova `Listary.Service.exe`; inizi di parola e lettere consecutive
   valgono di più.
+- **Icone dei file.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto, documenti e
+  archivi si distinguono subito.
 - **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude.
 - **Interfaccia senza privilegi di amministratore.** La barra gira come utente normale; solo un piccolo
   programma in background è elevato.

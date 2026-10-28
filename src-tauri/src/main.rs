@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod engine;
+mod icons;
 mod service;
 mod typesearch;
 
@@ -23,6 +24,8 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 #[derive(Default)]
 struct App {
     network: Volumes,
+    /// rendered icons by `icons::key`. ponytail: unbounded, but one entry per file type (plus one per program/shortcut shown).
+    icons: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
     /// number of network walks in progress; non-zero shows "Indexing…"
     busy: Arc<AtomicUsize>,
     /// set once the window really got focus after being shown; blur before that is a foreground-lock glitch, not a click-away
@@ -97,6 +100,17 @@ fn open(path: String, folder: bool) {
         let (verb, file): (Vec<u16>, Vec<u16>) = ("open\0".encode_utf16().collect(), path.encode_utf16().chain([0]).collect());
         unsafe { windows_sys::Win32::UI::Shell::ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), 1 /* SW_SHOWNORMAL */) };
     }
+}
+
+/// PNG of the shell icon for a result (`key` is `Hit::icon`). Raw bytes, no base64.
+#[tauri::command]
+async fn icon(key: String, path: String, app: State<'_, App>) -> Result<tauri::ipc::Response, String> {
+    if let Some(png) = app.icons.lock().unwrap().get(&key) {
+        return Ok(tauri::ipc::Response::new(png.clone()));
+    }
+    let png = icons::icon_png(&key, &path).ok_or("no icon")?;
+    app.icons.lock().unwrap().insert(key, png.clone());
+    Ok(tauri::ipc::Response::new(png))
 }
 
 #[tauri::command]
@@ -244,7 +258,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending, version, lang])
+        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending, version, lang, icon])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

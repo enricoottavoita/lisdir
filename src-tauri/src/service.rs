@@ -41,8 +41,16 @@ pub struct Hit {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+    /// cache key for the file-type icon, see `icons::key`
+    pub icon: String,
     #[serde(skip)]
     pub score: f32,
+}
+
+impl Hit {
+    pub fn new(name: String, path: String, is_dir: bool, score: f32) -> Self {
+        Hit { icon: crate::icons::key(&name, &path, is_dir), name, path, is_dir, score }
+    }
 }
 
 pub struct Reply {
@@ -63,11 +71,8 @@ pub fn search_volumes(vols: &Volumes, q: &str) -> Vec<Hit> {
     }
     for vol in vols.read().unwrap().iter() {
         let v = vol.read().unwrap();
-        hits.extend(engine::search(&v.idx, q, 20).into_iter().map(|(score, f)| Hit {
-            name: v.idx[&f].name.clone(),
-            path: engine::full_path(&v.idx, f, &v.root),
-            is_dir: v.idx[&f].is_dir,
-            score,
+        hits.extend(engine::search(&v.idx, q, 20).into_iter().map(|(score, f)| {
+            Hit::new(v.idx[&f].name.clone(), engine::full_path(&v.idx, f, &v.root), v.idx[&f].is_dir, score)
         }));
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -224,7 +229,7 @@ pub fn query(q: &str) -> Option<Reply> {
         match p.next()? {
             "H" => {
                 let (score, is_dir, name, path) = (p.next()?, p.next()?, p.next()?, p.next()?);
-                hits.push(Hit { name: name.into(), path: path.into(), is_dir: is_dir == "1", score: score.parse().ok()? });
+                hits.push(Hit::new(name.into(), path.into(), is_dir == "1", score.parse().ok()?));
             }
             "E" => return Some(Reply { hits, busy: p.next()? == "1", count: p.next()?.parse().ok()? }),
             _ => return None,
