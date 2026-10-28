@@ -93,7 +93,8 @@ does all of this in CI and publishes a GitHub release.
 
 ## Contributing
 
-Issues and pull requests are welcome. Run `cargo test` before sending a change. Keep the engine free of UI
+Issues and pull requests are welcome. Run `cargo test` before sending a change, and note user-visible changes
+under **Unreleased** in [CHANGELOG.md](CHANGELOG.md). Keep the engine free of UI
 concerns: `engine.rs` should stay testable without a window or elevation.
 
 ## License

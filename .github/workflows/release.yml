@@ -23,6 +23,14 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           grep -q "^version = \"$v\"" src-tauri/Cargo.toml || { echo "Cargo.toml version is not $v"; exit 1; }
 
+      - name: Release notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          # the body of the "## [X.Y.Z]" section, up to the next section or the link references at the end
+          awk -v v="$v" '/^## \[/ { p = index($0, "[" v "]") == 4; next } /^\[.*\]: / { p = 0 } p' CHANGELOG.md > changes.md
+          grep -q '[^[:space:]]' changes.md || { echo "CHANGELOG.md has no entry for $v"; exit 1; }
+          { echo "## What's new"; cat changes.md; echo; cat .github/release-notes.md; } > release-body.md
+
       - name: Test and build
         working-directory: src-tauri
         run: |
@@ -43,4 +51,4 @@ jobs:
           cp src-tauri/target/release/lisdir.exe "dist/lisdir-$v-portable.exe"
           (cd dist && sha256sum *.exe > SHA256SUMS.txt)
           gh release create "$GITHUB_REF_NAME" dist/*.exe dist/SHA256SUMS.txt \
-            --title "lisdir $v" --notes-file .github/release-notes.md
+            --title "lisdir $v" --notes-file release-body.md
