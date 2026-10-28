@@ -90,8 +90,9 @@ does all of this in CI and publishes a GitHub release.
 - The scheduled task points at the exe's current path; moving or rebuilding it while the helper runs
   requires stopping the helper first (the installer handles this on upgrade).
 - Type-to-search does not check whether something is selected, and does not work over elevated windows.
-- Not yet implemented: match highlighting, file icons, configurable hotkey, Open/Save dialog integration,
-  content search.
+- Not yet implemented: ranking by how often you open things, search filters, match highlighting, an action menu
+  and preview, a settings window with a configurable hotkey, Open/Save dialog integration, content search.
+  The plan is in [TODO.md](TODO.md).
 
 ## Contributing
 

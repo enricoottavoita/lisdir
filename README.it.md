@@ -67,8 +67,9 @@ cargo build --release
 - Solo NTFS per i dischi locali (ReFS, exFAT e FAT non sono indicizzati).
 - Le cartelle di rete vengono riscansionate, non osservate: le modifiche compaiono al prossimo aggiornamento.
 - "Digita per cercare" non controlla se c'è qualcosa di selezionato e non funziona sopra finestre elevate.
-- Non ancora presenti: evidenziazione delle lettere trovate, icone dei file, scorciatoia configurabile,
-  integrazione con i dialoghi Apri/Salva, ricerca nel contenuto.
+- Non ancora presenti: ordinamento in base a quanto usi i file, filtri di ricerca, evidenziazione delle lettere
+  trovate, menu azioni e anteprima, finestra delle impostazioni con scorciatoia configurabile, integrazione con i
+  dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 
 ## Licenza
 
