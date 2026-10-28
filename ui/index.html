@@ -94,10 +94,12 @@ function render() {
   }));
   list.children[sel]?.scrollIntoView({ block: 'nearest' });
 }
-async function run() {
-  const my = ++seq, r = await invoke('search', { q: q.value });
+async function run(refresh) {
+  const my = ++seq, r = await invoke('search', { q: q.value }), cur = hits[sel]?.path;
   if (my !== seq) return; // drop stale answers
-  hits = r; sel = 0; render(); showHint();
+  // a refresh while indexing keeps the selected item; typing starts again from the top
+  const at = refresh === true && cur ? r.findIndex(h => h.path === cur) : -1;
+  hits = r; sel = Math.max(at, 0); render(); showHint();
 }
 function go(i, folder) {
   const h = hits[i];
@@ -110,7 +112,7 @@ async function poll() {
   st.textContent = !up ? S.down : busy ? S.busy : S.items(n);
   clearTimeout(pollTimer); // one polling chain, however often the window regains focus
   if (busy || !up) pollTimer = setTimeout(poll, 1000);
-  if (busy) run();
+  if (busy) run(true);
 }
 
 invoke('version').then(v => document.getElementById('ver').textContent = 'v' + v);

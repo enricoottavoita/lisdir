@@ -10,6 +10,12 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-28
+
+### Fixed
+- The selection no longer jumps back to the first result while you scroll during indexing; the list refreshes
+  in place and keeps the selected item.
+
 ## [0.13.0] - 2026-10-28
 
 ### Added
@@ -79,7 +85,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/enricoottavoita/lisdir/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/enricoottavoita/lisdir/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/enricoottavoita/lisdir/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/enricoottavoita/lisdir/compare/v0.10.0...v0.11.0
