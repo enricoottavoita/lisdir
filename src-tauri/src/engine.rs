@@ -282,7 +282,8 @@ fn cache_path(root: &str) -> PathBuf {
     data_dir().join(format!("{name}.idx"))
 }
 
-pub fn save(v: &mut Volume) -> io::Result<()> {
+/// Write the cache file. Only reads the volume, so searches can run meanwhile.
+fn write_cache(v: &Volume) -> io::Result<()> {
     if v.journal_id == 0 && !v.walk {
         return Ok(()); // no journal to catch up from: a cache could only be stale
     }
@@ -304,8 +305,20 @@ pub fn save(v: &mut Volume) -> io::Result<()> {
     }
     let tmp = p.with_extension("tmp");
     std::fs::write(&tmp, b)?;
-    std::fs::rename(tmp, p)?; // atomic: a crash never leaves a half-written cache
+    std::fs::rename(tmp, p) // atomic: a crash never leaves a half-written cache
+}
+
+pub fn save(v: &mut Volume) -> io::Result<()> {
+    write_cache(v)?;
     v.dirty = false;
+    Ok(())
+}
+
+/// Save a shared volume without blocking searches: the file is written under a read lock (a second or two for
+/// a big disk) and the write lock is taken only to clear the flag. Call it from the thread that updates the volume.
+pub fn save_shared(vol: &RwLock<Volume>) -> io::Result<()> {
+    write_cache(&vol.read().unwrap())?;
+    vol.write().unwrap().dirty = false;
     Ok(())
 }
 
@@ -557,18 +570,36 @@ fn matches(q: &Query, idx: &Index, e: &Entry) -> Option<f32> {
     Some(base + if e.is_dir { 0.0 } else { 1.0 })
 }
 
+/// Below this many entries a search runs on one thread (starting threads would cost more than it saves).
+const PARALLEL_FROM: usize = 50_000;
+
 /// Best `limit` matches as (score, id), highest score first.
 pub fn search(idx: &Index, q: &Query, limit: usize) -> Vec<(f32, u64)> {
     if !q.searches_files() || q.is_empty() {
         return vec![];
     }
-    let mut hits: Vec<(f32, u64)> = idx.iter().filter_map(|(&f, e)| matches(q, idx, e).map(|s| (s, f))).collect();
     let best_first = |a: &(f32, u64), b: &(f32, u64)| b.0.total_cmp(&a.0);
-    if hits.len() > limit {
-        // a one-letter query matches most of the disk: pick the best few without sorting everything
-        hits.select_nth_unstable_by(limit, best_first);
-        hits.truncate(limit);
-    }
+    // a one-letter query matches most of the disk: keep only the best few without sorting everything
+    let top = |mut hits: Vec<(f32, u64)>| {
+        if hits.len() > limit {
+            hits.select_nth_unstable_by(limit, best_first);
+            hits.truncate(limit);
+        }
+        hits
+    };
+    let scan = |part: &[(&u64, &Entry)]| top(part.iter().filter_map(|&(&f, e)| matches(q, idx, e).map(|s| (s, f))).collect());
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+    let mut hits = if idx.len() < PARALLEL_FROM || threads == 1 {
+        top(idx.iter().filter_map(|(&f, e)| matches(q, idx, e).map(|s| (s, f))).collect())
+    } else {
+        // a hash map cannot be split, so list the entries once and give each thread a slice
+        let all: Vec<(&u64, &Entry)> = idx.iter().collect();
+        let parts: Vec<Vec<(f32, u64)>> = std::thread::scope(|s| {
+            let jobs: Vec<_> = all.chunks(all.len().div_ceil(threads)).map(|c| s.spawn(|| scan(c))).collect();
+            jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
+        });
+        top(parts.into_iter().flatten().collect())
+    };
     hits.sort_by(best_first);
     hits
 }
@@ -763,6 +794,22 @@ mod tests {
         std::fs::remove_file(cache_path("Z:")).unwrap();
         assert_eq!((back.idx.len(), back.next_usn, back.journal_id), (2, 200, 7));
         assert_eq!((back.idx[&12].name.as_str(), back.idx[&12].time, back.idx[&12].size), ("fresh.txt", NOW + 20, 4096));
+    }
+
+    #[test]
+    fn parallel_search_equals_one_thread() {
+        let mut i = Index::new();
+        for k in 0..(PARALLEL_FROM as u64 * 3) {
+            i.insert(k, Entry::new(0, format!("file{} report{}.txt", k % 997, k), false, NOW - (k % 400) as i64 * DAYS).with_size(k * 7));
+        }
+        for qs in ["rep 99", "report1", "ext:txt size:>100000", "date:week"] {
+            let query = q(qs);
+            let got: Vec<f32> = search(&i, &query, 20).iter().map(|h| h.0).collect();
+            let mut want: Vec<f32> = i.values().filter_map(|e| matches(&query, &i, e)).collect();
+            want.sort_by(|a, b| b.total_cmp(a));
+            want.truncate(20);
+            assert_eq!(got, want, "{qs}"); // same best scores whether or not the work was split across threads
+        }
     }
 
     #[test]

@@ -58,12 +58,14 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
             let streamed = vol.read().unwrap().idx.is_empty();
             let w = engine::walk(&root, streamed.then_some(&*vol));
             if w.reliable() {
-                let mut v = vol.write().unwrap();
-                if !streamed {
-                    v.idx = w.idx;
+                {
+                    let mut v = vol.write().unwrap();
+                    if !streamed {
+                        v.idx = w.idx;
+                    }
+                    v.dirty = true;
                 }
-                v.dirty = true;
-                let _ = engine::save(&mut v);
+                let _ = engine::save_shared(&vol);
                 wait = engine::WALK_INTERVAL;
             } else {
                 // share offline or drive unplugged: keep the old results (and cache) and retry soon

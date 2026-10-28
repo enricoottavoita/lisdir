@@ -109,9 +109,8 @@ fn tail(vol: Shared) {
         }
         if last_save.elapsed().as_secs() >= 60 {
             last_save = Instant::now();
-            let mut v = vol.write().unwrap();
-            if v.dirty {
-                let _ = engine::save(&mut v);
+            if vol.read().unwrap().dirty {
+                let _ = engine::save_shared(&vol);
             }
         }
     }

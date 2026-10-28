@@ -10,6 +10,11 @@ when releasing.
 
 ## [Unreleased]
 
+### Changed
+- Searches run on several cores: with 1.6 million files, a text search dropped from about 250 ms to 60–90 ms.
+- Saving the index cache no longer pauses searches (it used to hold the index locked for a second or two, once a
+  minute while files were changing).
+
 ## [0.14.0] - 2026-10-28
 
 ### Added
