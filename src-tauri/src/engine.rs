@@ -864,6 +864,7 @@ mod tests {
     #[ignore]
     fn real_file_records() {
         let h = open_volume('C').expect("run elevated");
+        eprintln!("volume opened");
         let mut idx = Index::new();
         let mut med = MFT_ENUM_DATA_V0 { StartFileReferenceNumber: 0, LowUsn: 0, HighUsn: i64::MAX };
         let mut buf = vec![0u8; 1 << 20];
@@ -872,6 +873,12 @@ mod tests {
             for r in parse_records(&buf[8..got as usize]) {
                 idx.insert(r.frn, Entry::new(r.parent, r.name, r.is_dir, r.time));
             }
+        }
+        eprintln!("{} entries enumerated", idx.len());
+        let mut probe = vec![0u8; 8192];
+        for frn in [5u64, 6, 100_000] {
+            let m = meta_of(&h, frn, &mut probe);
+            eprintln!("record {frn}: {:?}", m.map(|m| (m.mtime, m.size)));
         }
         let t = std::time::Instant::now();
         fill_meta(&h, &mut idx);
