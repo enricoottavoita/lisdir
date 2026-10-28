@@ -31,6 +31,9 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 - **File-type icons and sizes.** Results show the same icons as Explorer, and the size at the right: for a folder, the
   total of the files inside it, kept current as they change.
 - **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
+- **Actions on a result.** `→`, `Ctrl+O` or a right click opens a menu: copy or cut the file (`Ctrl+C` / `Ctrl+X`,
+  then paste it in Explorer), copy its path (`Ctrl+Shift+C`), open with, open a terminal there (`Ctrl+T`),
+  properties (`Alt+Enter`). The shortcuts also work with the menu closed.
 - **Updates.** The tray menu offers a new version when one is published and installs it after you click, checking
   its SHA-256 first. This check is the only internet request lisdir makes.
 - **No admin UI.** The bar runs as a normal user; only a small background helper is elevated.
@@ -86,6 +89,7 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost |
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
 | `src-tauri/src/icons.rs` | Shell file-type icons rendered to PNG |
+| `src-tauri/src/actions.rs` | The action menu: files on the clipboard as Explorer puts them, open with, terminal, properties |
 | `src-tauri/src/update.rs` | Update check against the GitHub releases; downloads and verifies the installer, or swaps in the portable exe |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
 | `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
@@ -147,7 +151,7 @@ does all of this in CI and publishes a GitHub release.
 - The first scan of a local disk reads one file record per file to collect sizes and times; that takes about 11
   seconds more per million files, once per disk (and again whenever the cache format changes).
 - There is no way yet to sort results by size or date, and `size:` does not match folders.
-- Not yet implemented: an action menu and preview, a settings window with a configurable hotkey, Open/Save
+- Not yet implemented: a preview pane, a settings window with a configurable hotkey, Open/Save
   dialog integration, content search.
   The plan is in [TODO.md](TODO.md).
 

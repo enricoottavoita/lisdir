@@ -27,8 +27,8 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Folder sizes (sum of their files, kept current); the portable exe updates itself in place (0.14.3)
 
 ## 0.15 — actions and preview
-- [ ] Action menu on a result (`Ctrl+O`, right arrow, right click) with shortcut hints in the footer
-- [ ] Copy / cut a file to the clipboard (`Ctrl+C`, `Ctrl+X`), copy path, open with, open terminal here, properties
+- [x] Action menu on a result (`Ctrl+O`, right arrow, right click) with shortcut hints in the footer
+- [x] Copy / cut a file to the clipboard (`Ctrl+C`, `Ctrl+X`), copy path, open with, open terminal here, properties
 - [ ] Preview pane (`Alt+P`) that shows contents: text, images, thumbnails
 - [ ] Pin files and folders so they always show up first
 

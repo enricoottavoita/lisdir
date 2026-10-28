@@ -1,4 +1,5 @@
 #![cfg_attr(not(any(debug_assertions, test)), windows_subsystem = "windows")]
+mod actions;
 mod apps;
 mod engine;
 mod icons;
@@ -179,6 +180,19 @@ fn open(path: String, folder: bool, name: String, is_dir: bool, app: bool, state
         // ShellExecute, like double-clicking in Explorer: no console window flashing up (unlike `cmd /c start`).
         let (verb, file): (Vec<u16>, Vec<u16>) = ("open\0".encode_utf16().collect(), path.encode_utf16().chain([0]).collect());
         unsafe { windows_sys::Win32::UI::Shell::ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), 1 /* SW_SHOWNORMAL */) };
+    }
+}
+
+/// The action menu: "copy" / "cut" (the file, as in Explorer), "path", "openas", "terminal", "properties".
+#[tauri::command]
+fn act(action: String, path: String, is_dir: bool, w: WebviewWindow) {
+    let _ = w.hide(); // first, so the dialog or terminal comes to the front
+    match action.as_str() {
+        "copy" | "cut" => { actions::copy_file(&path, action == "cut"); }
+        "path" => { actions::copy_text(&path); }
+        "terminal" => actions::terminal(&path, is_dir),
+        v @ ("openas" | "properties") => actions::verb(v, &path),
+        _ => {}
     }
 }
 
@@ -393,7 +407,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending, version, lang, icon, forget])
+        .invoke_handler(tauri::generate_handler![search, status, open, act, hide, take_pending, version, lang, icon, forget])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

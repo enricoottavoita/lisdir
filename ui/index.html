@@ -16,10 +16,15 @@
   li.sel { background:var(--sel) }
   li b { color:var(--hl); font-weight:600 }
   li small { display:block; color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis }
+  #menu { position:fixed; right:18px; min-width:240px; margin:0; padding:4px; list-style:none; background:var(--bg);
+          border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px #0005 }
+  #menu li:hover { background:var(--sel) }
+  #menu .sz { margin-left:auto; padding-left:24px }
   #bar { flex:none; padding:8px 18px; color:var(--dim); font-size:12px; border-top:1px solid var(--line); background:var(--bg) }
 </style>
 <input id="q" placeholder="Search files and folders…" autofocus autocomplete="off" spellcheck="false">
 <ul id="list"></ul>
+<ul id="menu" hidden></ul>
 <div id="bar"><span id="ver" style="float:right; margin-left:12px"></span><span id="st"></span> · <span id="hint"></span></div>
 <script>
 const { invoke } = window.__TAURI__.core;
@@ -28,14 +33,19 @@ let hits = [], sel = 0, seq = 0, pollTimer;
 
 // Interface language comes from the Rust side (Windows UI language), so the tray menu and this bar always agree.
 const STR = {
-  en: { ph: 'Search files, folders and apps…', app: 'Application', hint: '↑↓ select · Enter open · Ctrl+Enter show in folder · Esc close',
+  en: { ph: 'Search files, folders and apps…', app: 'Application', hint: '↑↓ select · Enter open · → or Ctrl+O actions · Esc close',
         hintRecent: 'Recent · ↑↓ select · Enter open · Del remove · Shift+Del clear all · Esc close',
         busy: 'Indexing…', items: n => n.toLocaleString() + ' items',
-        down: 'Index service not running (tray menu → Install index service)' },
-  it: { ph: 'Cerca file, cartelle e app…', app: 'Applicazione', hint: '↑↓ seleziona · Invio apri · Ctrl+Invio mostra nella cartella · Esc chiudi',
+        down: 'Index service not running (tray menu → Install index service)',
+        acts: { open: 'Open', folder: 'Show in folder', copy: 'Copy', cut: 'Cut', path: 'Copy path', openas: 'Open with…',
+                terminal: 'Open terminal here', properties: 'Properties' }, key: k => k },
+  it: { ph: 'Cerca file, cartelle e app…', app: 'Applicazione', hint: '↑↓ seleziona · Invio apri · → o Ctrl+O azioni · Esc chiudi',
         hintRecent: 'Recenti · ↑↓ seleziona · Invio apri · Canc rimuovi · Maiusc+Canc svuota tutto · Esc chiudi',
         busy: 'Indicizzazione…', items: n => n.toLocaleString() + ' elementi',
-        down: 'Servizio di indicizzazione non attivo (menu icona → Installa servizio di indicizzazione)' },
+        down: 'Servizio di indicizzazione non attivo (menu icona → Installa servizio di indicizzazione)',
+        acts: { open: 'Apri', folder: 'Mostra nella cartella', copy: 'Copia', cut: 'Taglia', path: 'Copia percorso',
+                openas: 'Apri con…', terminal: 'Apri terminale qui', properties: 'Proprietà' },
+        key: k => k.replace('Enter', 'Invio').replace('Shift', 'Maiusc') },
 };
 let S = STR.en;
 function applyLang() {
@@ -105,10 +115,48 @@ function render() {
       li.append(sz);
     }
     li.onclick = () => go(i, false);
+    li.oncontextmenu = e => { e.preventDefault(); sel = i; menu = 0; render(); };
     return li;
   }));
   list.children[sel]?.scrollIntoView({ block: 'nearest' });
+  showMenu();
 }
+
+// The action menu on the selected result, and the shortcut for each action (they work with the menu closed too).
+const ACTS = [['open', 'Enter'], ['folder', 'Ctrl+Enter'], ['copy', 'Ctrl+C'], ['cut', 'Ctrl+X'], ['path', 'Ctrl+Shift+C'],
+              ['openas', ''], ['terminal', 'Ctrl+T'], ['properties', 'Alt+Enter']];
+const mn = document.getElementById('menu');
+let menu = -1; // highlighted menu row; -1 = closed
+function showMenu() {
+  const row = list.children[sel];
+  if (menu < 0 || !row || hits[sel].app) { menu = -1; mn.hidden = true; return; } // apps only open
+  mn.replaceChildren(...ACTS.map(([a, k], i) => {
+    const li = document.createElement('li');
+    li.className = i === menu ? 'sel' : '';
+    li.append(S.acts[a]);
+    if (k) { const s = document.createElement('span'); s.className = 'sz'; s.textContent = S.key(k); li.append(s); }
+    li.onmousedown = e => { e.preventDefault(); act(a); }; // mousedown keeps the focus in the box
+    return li;
+  }));
+  mn.hidden = false;
+  const r = row.getBoundingClientRect(), h = mn.offsetHeight; // below the row, or above it if it does not fit
+  mn.style.top = (r.bottom + h <= innerHeight ? r.bottom : Math.max(0, r.top - h)) + 'px';
+}
+function act(a) {
+  const h = hits[sel];
+  menu = -1; showMenu();
+  if (a === 'open' || a === 'folder') return go(sel, a === 'folder');
+  if (h && !h.app) invoke('act', { action: a, path: h.path, isDir: h.is_dir });
+}
+// The action a key combination stands for, if any. With text selected in the box, Ctrl+C / Ctrl+X edit the text.
+function keyAct(e) {
+  if (e.key === 'Enter') return e.altKey ? 'properties' : e.ctrlKey ? 'folder' : 'open';
+  if (!e.ctrlKey || e.altKey) return null;
+  if (e.code === 'KeyT') return 'terminal';
+  if (q.selectionStart !== q.selectionEnd) return null;
+  return { KeyC: e.shiftKey ? 'path' : 'copy', KeyX: 'cut' }[e.code] ?? null;
+}
+document.onmousedown = e => { if (menu >= 0 && !mn.contains(e.target)) { menu = -1; showMenu(); } };
 async function run(refresh) {
   const my = ++seq, r = await invoke('search', { q: q.value }), cur = hits[sel]?.path;
   if (my !== seq) return; // drop stale answers
@@ -131,23 +179,29 @@ async function poll() {
 }
 
 invoke('version').then(v => document.getElementById('ver').textContent = 'v' + v);
-q.oninput = run;
+q.oninput = () => { menu = -1; run(); };
 q.onkeydown = e => {
-  if (e.key === 'ArrowDown') sel = Math.min(sel + 1, hits.length - 1);
-  else if (e.key === 'ArrowUp') sel = Math.max(sel - 1, 0);
-  else if (e.key === 'Enter') return go(sel, e.ctrlKey);
-  else if (e.key === 'Escape') return invoke('hide');
+  const k = e.key, n = ACTS.length;
+  if (menu >= 0 && (k === 'ArrowDown' || k === 'ArrowUp')) menu = (menu + (k === 'ArrowDown' ? 1 : n - 1)) % n;
+  else if (menu >= 0 && k === 'Enter' && !e.ctrlKey && !e.altKey) { e.preventDefault(); return act(ACTS[menu][0]); }
+  else if (menu >= 0 && (k === 'Escape' || k === 'ArrowLeft')) menu = -1;
+  else if ((k === 'ArrowRight' && q.selectionEnd === q.value.length) || (e.ctrlKey && e.code === 'KeyO')) menu = 0;
+  else if (k === 'ArrowDown') sel = Math.min(sel + 1, hits.length - 1);
+  else if (k === 'ArrowUp') sel = Math.max(sel - 1, 0);
+  else if (k === 'Escape') return invoke('hide');
   else if (e.key === 'Delete' && !q.value.trim()) { // forget a recent item, or all of them with Shift
     const h = hits[sel];
     if (h) invoke('forget', { path: e.shiftKey ? null : h.path }).then(run);
     return;
   }
+  else if (keyAct(e)) { e.preventDefault(); return act(keyAct(e)); }
   else return;
   e.preventDefault(); render();
 };
 // Rust calls this each time the bar is shown. Keys typed in Explorer/Desktop were swallowed by the Rust hook and
 // parked; claim them here. Otherwise a fresh open starts empty, which lists your recent items.
 window.opened = async () => {
+  menu = -1;
   poll();
   q.value = await invoke('take_pending');
   run();

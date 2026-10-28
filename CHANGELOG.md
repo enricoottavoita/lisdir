@@ -10,6 +10,13 @@ when releasing.
 
 ## [Unreleased]
 
+### Added
+- Action menu on a result: press `→` (at the end of the text), `Ctrl+O`, or right-click. It offers open, show in
+  folder, copy and cut (`Ctrl+C` / `Ctrl+X`: the file goes on the clipboard as Explorer puts it, so `Ctrl+V` in a
+  folder pastes or moves it), copy path (`Ctrl+Shift+C`), open with, open terminal here (`Ctrl+T`, Windows Terminal
+  or else a console) and properties (`Alt+Enter`). The shortcuts work with the menu closed too; with text selected in
+  the search box, `Ctrl+C` and `Ctrl+X` still copy the text.
+
 ## [0.14.3] - 2026-10-28
 
 ### Added
