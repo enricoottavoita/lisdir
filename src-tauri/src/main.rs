@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod apps;
 mod engine;
 mod icons;
 mod service;
@@ -24,6 +25,8 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 #[derive(Default)]
 struct App {
     network: Volumes,
+    /// Start menu and Store apps, loaded in the background at startup
+    apps: Arc<RwLock<Vec<apps::App>>>,
     /// rendered icons by `icons::key`. ponytail: unbounded, but one entry per file type (plus one per program/shortcut shown).
     icons: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
     /// number of network walks in progress; non-zero shows "Indexing…"
@@ -60,6 +63,8 @@ fn start(app: &App) {
             service::start_helper(); // no-op (fails quietly) until the service has been installed
         }
     });
+    let apps = app.apps.clone();
+    std::thread::spawn(move || *apps.write().unwrap() = apps::load());
     for root in engine::network_roots() {
         let (v, fresh) = engine::open_walk(&root);
         let v: Shared = Arc::new(RwLock::new(v));
@@ -74,6 +79,9 @@ async fn search(q: String, app: State<'_, App>) -> Result<Vec<Hit>, String> {
     let mut hits = service::search_volumes(&app.network, &q);
     if !q.trim().is_empty() {
         hits.extend(service::query(&q).map(|r| r.hits).unwrap_or_default());
+        // apps are ranked together with files; their Start menu shortcuts would only duplicate them
+        hits.retain(|h| !(h.path.contains(r"\Start Menu\Programs\") && h.path.to_lowercase().ends_with(".lnk")));
+        hits.extend(apps::search(&app.apps.read().unwrap(), &q, 20).into_iter().map(|(score, a)| Hit::app(&a.name, &a.id, score)));
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
     hits.truncate(20);

@@ -339,7 +339,7 @@ pub fn walk(root: &str) -> Index {
 // ---- search
 
 /// Subsequence match on a lowercased name; None if no match. Higher is better.
-fn score(query: &str, name: &str) -> Option<f32> {
+pub fn score(query: &str, name: &str) -> Option<f32> {
     let n: Vec<char> = name.chars().collect();
     let (mut i, mut s, mut prev) = (0, 0f32, usize::MAX);
     let mut first = None;

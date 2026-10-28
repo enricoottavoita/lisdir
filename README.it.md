@@ -19,6 +19,7 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
   apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona).
 - **Ricerca approssimata.** `lsrysvc` trova `Listary.Service.exe`; inizi di parola e lettere consecutive
   valgono di più.
+- **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.
 - **Icone dei file.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto, documenti e
   archivi si distinguono subito.
 - **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude.

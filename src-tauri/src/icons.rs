@@ -3,14 +3,14 @@
 //! network share; only programs and shortcuts, whose icon belongs to the individual file, are read by path.
 use std::{
     mem::{size_of, zeroed},
-    ptr::null,
+    ptr::{null, null_mut},
 };
 use windows_sys::Win32::{
     Graphics::Gdi::{CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS},
     Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL},
-    System::Com::CoInitializeEx,
+    System::Com::{CoInitializeEx, CoTaskMemFree},
     UI::{
-        Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_USEFILEATTRIBUTES},
+        Shell::{SHGetFileInfoW, SHParseDisplayName, SHFILEINFOW, SHGFI_ICON, SHGFI_PIDL, SHGFI_USEFILEATTRIBUTES},
         WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO},
     },
 };
@@ -42,6 +42,9 @@ pub fn icon_png(key: &str, path: &str) -> Option<Vec<u8>> {
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
 
+    if let Some(id) = key.strip_prefix("app:") {
+        return unsafe { app_icon(id) };
+    }
     let (target, extra, attrs) = match key {
         "dir" => ("folder", SHGFI_USEFILEATTRIBUTES, FILE_ATTRIBUTE_DIRECTORY),
         "file" => ("file", SHGFI_USEFILEATTRIBUTES, FILE_ATTRIBUTE_NORMAL),
@@ -59,6 +62,24 @@ pub fn icon_png(key: &str, path: &str) -> Option<Vec<u8>> {
         DestroyIcon(fi.hIcon);
         px.map(|(w, h, rgba)| png(w, h, &rgba))
     }
+}
+
+/// Icon of a Start menu / Store app, addressed through its `shell:AppsFolder` item.
+unsafe fn app_icon(id: &str) -> Option<Vec<u8>> {
+    let name: Vec<u16> = format!(r"shell:AppsFolder\{id}").encode_utf16().chain([0]).collect();
+    let mut pidl = null_mut();
+    if SHParseDisplayName(name.as_ptr(), null_mut(), &mut pidl, 0, null_mut()) != 0 {
+        return None;
+    }
+    let mut fi: SHFILEINFOW = zeroed();
+    let ok = SHGetFileInfoW(pidl as *const u16, 0, &mut fi, size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_PIDL);
+    CoTaskMemFree(pidl.cast());
+    if ok == 0 || fi.hIcon.is_null() {
+        return None;
+    }
+    let px = to_rgba(fi.hIcon);
+    DestroyIcon(fi.hIcon);
+    px.map(|(w, h, rgba)| png(w, h, &rgba))
 }
 
 /// Read an icon's pixels as RGBA. Old-style icons have no alpha channel; their transparency is in the mask.

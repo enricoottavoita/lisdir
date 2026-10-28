@@ -43,13 +43,19 @@ pub struct Hit {
     pub is_dir: bool,
     /// cache key for the file-type icon, see `icons::key`
     pub icon: String,
+    /// a launchable app (Start menu / Store) rather than a file: `path` is then a `shell:AppsFolder\...` target
+    pub app: bool,
     #[serde(skip)]
     pub score: f32,
 }
 
 impl Hit {
     pub fn new(name: String, path: String, is_dir: bool, score: f32) -> Self {
-        Hit { icon: crate::icons::key(&name, &path, is_dir), name, path, is_dir, score }
+        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, name, path, is_dir, score }
+    }
+
+    pub fn app(name: &str, id: &str, score: f32) -> Self {
+        Hit { icon: format!("app:{id}"), app: true, name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, score }
     }
 }
 

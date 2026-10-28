@@ -11,6 +11,9 @@ when releasing.
 ## [Unreleased]
 
 ### Added
+- App launcher: Start menu and Microsoft Store apps are found by the same fuzzy search as files and ranked together
+  with them (an app outranks a file with an equally good name match). Apps show their own icon and open with
+  `Enter`. The apps' Start menu shortcuts are hidden from the file results so they are not listed twice.
 - File-type icons in the result list, taken from Windows itself (the same icons Explorer shows), so videos,
   photos, documents, archives, folders and programs are recognisable at a glance. Icons are looked up by file
   type without opening the file, so they are instant even on network shares; programs and shortcuts show their

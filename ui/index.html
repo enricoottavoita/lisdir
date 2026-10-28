@@ -26,10 +26,10 @@ let hits = [], sel = 0, seq = 0, pollTimer;
 
 // Interface language comes from the Rust side (Windows UI language), so the tray menu and this bar always agree.
 const STR = {
-  en: { ph: 'Search files and folders…', hint: '↑↓ select · Enter open · Ctrl+Enter show in folder · Esc close',
+  en: { ph: 'Search files, folders and apps…', app: 'Application', hint: '↑↓ select · Enter open · Ctrl+Enter show in folder · Esc close',
         busy: 'Indexing…', items: n => n.toLocaleString() + ' items',
         down: 'Index service not running (tray menu → Install index service)' },
-  it: { ph: 'Cerca file e cartelle…', hint: '↑↓ seleziona · Invio apri · Ctrl+Invio mostra nella cartella · Esc chiudi',
+  it: { ph: 'Cerca file, cartelle e app…', app: 'Applicazione', hint: '↑↓ seleziona · Invio apri · Ctrl+Invio mostra nella cartella · Esc chiudi',
         busy: 'Indicizzazione…', items: n => n.toLocaleString() + ' elementi',
         down: 'Servizio di indicizzazione non attivo (menu icona → Installa servizio di indicizzazione)' },
 };
@@ -65,7 +65,7 @@ function render() {
     tx.className = 'tx';
     tx.append(h.name);
     const s = document.createElement('small');
-    s.textContent = h.path;
+    s.textContent = h.app ? S.app : h.path;
     tx.append(s);
     li.append(img, tx);
     li.onclick = () => go(i, false);
@@ -80,7 +80,9 @@ async function run() {
 }
 function go(i, folder) {
   const h = hits[i];
-  if (h) { invoke('open', { path: h.path, folder }); invoke('hide'); }
+  if (!h || (h.app && folder)) return; // an app has no folder to reveal
+  invoke('open', { path: h.path, folder });
+  invoke('hide');
 }
 async function poll() {
   const [busy, n, up] = await invoke('status');
