@@ -24,10 +24,9 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Refresh the app list when the Start menu changes, not only at startup
 
 ## 0.13.x — search follow-ups
-- [ ] `size:>1gb` / `size:10mb..1gb` filter. Needs file sizes in the index: read the MFT attributes on NTFS (the
-      USN records carry no size) and take sizes from the directory listing for network folders
-- [ ] Exact `date:` on NTFS from the MFT's modified time (today it is the last USN record, which also moves on
-      renames and permission changes)
+- [x] `size:>1gb` / `size:10mb..1gb` filter (sizes read from the NTFS file records; from the directory listing for network folders)
+- [x] Exact `date:` on NTFS from the file record's modified time
+- [ ] Show sizes in the results
 - [ ] Search several thousand results faster than a full scan per keystroke (keep names in a flat array and use
       several cores), if the 2-million-name budget (about 0.3 s) starts to feel slow
 - [x] Clear all recent items at once

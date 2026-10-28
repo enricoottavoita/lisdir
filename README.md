@@ -45,11 +45,13 @@ Plain words match file names; everything else narrows the results. All of it can
 | `doc:` `pic:` `video:` `music:` `zip:` | a whole category of file types |
 | `date:today`, `yesterday`, `week`, `month`, `year` | changed today / yesterday / in the last 7, 30, 365 days |
 | `date:2026`, `date:2026-07`, `date:2026-07-31` | changed in that year / month / day |
+| `size:>1gb`, `size:<10mb`, `size:10mb..1gb`, `size:empty` | file size (`>` `>=` `<` `<=`, a range, or empty); units kb mb gb tb |
 | `app:` | apps only |
 
-`date:` uses each file's last change (on NTFS, the time of its latest journal record; for network folders, the
-modified time). Words and filters together work too: `report ext:pdf date:month -draft`. With only filters and no
-words, the newest files come first.
+`date:` and `size:` use the file's modified time and size, read from the NTFS file record (for network folders, from
+the directory listing). A size filter matches files only. Words and filters together work too:
+`report ext:pdf date:month -draft`. With only filters and no words, the newest files come first; with `size:`, the
+biggest.
 
 ## How it works
 
@@ -127,8 +129,8 @@ does all of this in CI and publishes a GitHub release.
 - The app list is read when lisdir starts, so a newly installed app appears after a restart.
 - Type-to-search does not check whether something is selected, and does not work over elevated windows.
 - Setting up the elevated helper needs administrator rights once; after that the bar needs none.
-- No `size:` filter yet (the index does not store file sizes). `date:` is the last change, not strictly the
-  modified time.
+- Sizes are not shown in the results yet. After updating, each local disk is re-read once to collect sizes and
+  times, which takes longer than before. A file whose data is kept in an NTFS attribute list reports size 0.
 - Not yet implemented: an action menu and preview, a settings window with a configurable hotkey, Open/Save
   dialog integration, content search.
   The plan is in [TODO.md](TODO.md).

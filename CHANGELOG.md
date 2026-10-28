@@ -10,6 +10,16 @@ when releasing.
 
 ## [Unreleased]
 
+### Added
+- `size:` filter: `size:>1gb`, `size:<10mb`, `size:10mb..1gb`, `size:empty` (units kb, mb, gb, tb; `>=` and `<=`
+  also work). It matches files only and lists the biggest first when there are no words.
+
+### Changed
+- `date:` on local disks now uses the file's real modified time from its NTFS file record, not the time of its last
+  USN journal record (which also moved on renames and permission changes). Edits are now tracked live too.
+- The index stores each file's size. Local disks are rebuilt once after updating (the cache format changed), which
+  reads one file record per file and takes longer than the previous scan.
+
 ## [0.13.2] - 2026-10-28
 
 ### Added

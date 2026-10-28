@@ -1,6 +1,6 @@
 //! NTFS file index: full MFT enumeration (FSCTL_ENUM_USN_DATA), live updates by tailing the USN journal,
 //! an on-disk cache, and fuzzy name search. Needs an elevated process (raw volume handle).
-use crate::query::{Only, Query};
+use crate::{mft, query::{Only, Query}};
 use std::{
     collections::HashMap,
     ffi::c_void,
@@ -17,8 +17,8 @@ use windows_sys::Win32::{
     System::{
         IO::DeviceIoControl,
         Ioctl::{
-            FSCTL_ENUM_USN_DATA, FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL, MFT_ENUM_DATA_V0,
-            READ_USN_JOURNAL_DATA_V0, USN_JOURNAL_DATA_V0,
+            FSCTL_ENUM_USN_DATA, FSCTL_GET_NTFS_FILE_RECORD, FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL, MFT_ENUM_DATA_V0,
+            NTFS_FILE_RECORD_INPUT_BUFFER, READ_USN_JOURNAL_DATA_V0, USN_JOURNAL_DATA_V0,
         },
     },
 };
@@ -26,20 +26,30 @@ use windows_sys::Win32::{
 const REASON_CREATE: u32 = 0x100;
 const REASON_DELETE: u32 = 0x200;
 const REASON_RENAME_NEW: u32 = 0x2000;
+// content changes, and the close that follows them (when NTFS has written the new size to the file record)
+const REASON_DATA: u32 = 0x1 | 0x2 | 0x4;
+const REASON_CLOSE: u32 = 0x8000_0000;
 
 pub struct Entry {
     parent: u64,
     pub name: String,
     lower: String,
     pub is_dir: bool,
-    /// last change, unix seconds (0 = unknown). On NTFS this is the time of the file's last USN journal record,
-    /// which tracks the last modification closely but also moves on renames and permission changes.
+    /// last modification, unix seconds (0 = unknown). NTFS: from the file record; until that is read, the time of
+    /// the file's last USN record.
     time: i64,
+    /// bytes (0 for folders and when unknown)
+    pub size: u64,
 }
 
 impl Entry {
     fn new(parent: u64, name: String, is_dir: bool, time: i64) -> Self {
-        Entry { parent, lower: name.to_lowercase(), name, is_dir, time }
+        Entry { parent, lower: name.to_lowercase(), name, is_dir, time, size: 0 }
+    }
+
+    fn with_size(mut self, size: u64) -> Self {
+        self.size = size;
+        self
     }
 }
 
@@ -70,6 +80,8 @@ struct Rec {
 pub enum Change {
     Upsert(u64, u64, String, bool, i64),
     Delete(u64),
+    /// modified time and size read from the file record, for an entry upserted earlier in the same batch
+    Meta(u64, i64, u64),
 }
 
 fn rd<T: Copy>(b: &[u8], off: usize) -> T {
@@ -77,7 +89,7 @@ fn rd<T: Copy>(b: &[u8], off: usize) -> T {
 }
 
 /// FILETIME (100 ns ticks since 1601) to unix seconds.
-fn filetime_to_unix(ft: i64) -> i64 {
+pub fn filetime_to_unix(ft: i64) -> i64 {
     (ft / 10_000_000 - 11_644_473_600).max(0)
 }
 
@@ -110,6 +122,7 @@ fn parse_records(buf: &[u8]) -> Vec<Rec> {
 
 struct Handle(HANDLE);
 unsafe impl Send for Handle {}
+unsafe impl Sync for Handle {}
 impl Drop for Handle {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.0) };
@@ -140,6 +153,42 @@ fn query_journal(h: &Handle) -> Option<USN_JOURNAL_DATA_V0> {
     ioctl(h, FSCTL_QUERY_USN_JOURNAL, &(), &mut j, size_of::<USN_JOURNAL_DATA_V0>()).ok().map(|_| j)
 }
 
+/// Modified time and size of one file, from its NTFS file record. None if the record cannot be read (deleted
+/// meanwhile, or a layout we do not understand).
+fn meta_of(h: &Handle, frn: u64, buf: &mut [u8]) -> Option<mft::Meta> {
+    let want = frn & 0xFFFF_FFFF_FFFF; // the top 16 bits are a reuse counter
+    let input = NTFS_FILE_RECORD_INPUT_BUFFER { FileReferenceNumber: want as i64 };
+    let got = ioctl(h, FSCTL_GET_NTFS_FILE_RECORD, &input, buf.as_mut_ptr(), buf.len()).ok()? as usize;
+    // output: file reference u64, record length u32, then the record. For an unused number Windows
+    // answers with the previous used one, so the reference must be checked.
+    let len = rd::<u32>(buf, 8) as usize;
+    if got < 12 + len || rd::<u64>(buf, 0) & 0xFFFF_FFFF_FFFF != want {
+        return None;
+    }
+    mft::parse(&mut buf[12..12 + len])
+}
+
+/// Read `meta_of` for every entry, on several threads (it is one system call per file).
+fn fill_meta(h: &Handle, idx: &mut Index) {
+    let frns: Vec<u64> = idx.keys().copied().collect();
+    let found: Vec<Vec<(u64, mft::Meta)>> = std::thread::scope(|s| {
+        let jobs: Vec<_> = frns
+            .chunks(frns.len().div_ceil(8).max(1))
+            .map(|chunk| s.spawn(move || {
+                let mut buf = vec![0u8; 8192];
+                chunk.iter().filter_map(|&f| meta_of(h, f, &mut buf).map(|m| (f, m))).collect()
+            }))
+            .collect();
+        jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
+    });
+    for (f, m) in found.into_iter().flatten() {
+        if let Some(e) = idx.get_mut(&f) {
+            e.time = m.mtime;
+            e.size = m.size;
+        }
+    }
+}
+
 /// Full enumeration of the volume. The journal position is read first, so changes made while
 /// scanning are replayed afterwards (upserts/deletes are idempotent).
 pub fn scan_volume(letter: char) -> Result<Volume, String> {
@@ -160,6 +209,7 @@ pub fn scan_volume(letter: char) -> Result<Volume, String> {
             Err(e) => return Err(format!("FSCTL_ENUM_USN_DATA failed: error {e}")),
         }
     }
+    fill_meta(&h, &mut idx);
     // ponytail: no active journal => journal_id 0, no live updates and no cache (always rescanned).
     Ok(Volume { root: format!("{letter}:"), walk: false, idx, journal_id: j.map_or(0, |j| j.UsnJournalID), next_usn: j.map_or(0, |j| j.NextUsn), dirty: true })
 }
@@ -173,7 +223,7 @@ pub fn read_changes(v: &Volume) -> Result<(Vec<Change>, i64), String> {
     loop {
         let q = READ_USN_JOURNAL_DATA_V0 {
             StartUsn: next,
-            ReasonMask: REASON_CREATE | REASON_DELETE | REASON_RENAME_NEW,
+            ReasonMask: REASON_CREATE | REASON_DELETE | REASON_RENAME_NEW | REASON_DATA | REASON_CLOSE,
             ReturnOnlyOnClose: 0,
             Timeout: 0,
             BytesToWaitFor: 0,
@@ -185,6 +235,18 @@ pub fn read_changes(v: &Volume) -> Result<(Vec<Change>, i64), String> {
             out.push(if r.reason & REASON_DELETE != 0 { Change::Delete(r.frn) } else { Change::Upsert(r.frn, r.parent, r.name, r.is_dir, r.time) });
         }
         if got <= 8 {
+            // the file record of each entry that was upserted (and not deleted again) tells its current time and size
+            let mut seen = std::collections::HashSet::new();
+            let mut buf = vec![0u8; 8192];
+            let mut metas = vec![];
+            for c in out.iter().rev() {
+                match c {
+                    Change::Upsert(f, ..) if seen.insert(*f) => metas.extend(meta_of(&h, *f, &mut buf).map(|m| Change::Meta(*f, m.mtime, m.size))),
+                    Change::Delete(f) => { seen.insert(*f); }
+                    _ => {}
+                }
+            }
+            out.extend(metas);
             return Ok((out, new_next)); // no more records: new_next is the journal's current end
         }
         next = new_next;
@@ -197,14 +259,20 @@ pub fn apply(v: &mut Volume, changes: Vec<Change>, next_usn: i64) {
         match c {
             Change::Upsert(frn, parent, name, is_dir, time) => { v.idx.insert(frn, Entry::new(parent, name, is_dir, time)); }
             Change::Delete(frn) => { v.idx.remove(&frn); }
+            Change::Meta(frn, time, size) => {
+                if let Some(e) = v.idx.get_mut(&frn) {
+                    e.time = time;
+                    e.size = size;
+                }
+            }
         }
     }
     v.next_usn = next_usn;
 }
 
-// ---- on-disk cache: "LSD2", journal_id u64, next_usn i64, count u64, then per entry
-// ---- frn u64, parent u64, time i64, is_dir u8, name_len u16, utf8 name.
-// ---- (An older "LSD1" cache has no times; it is ignored and rebuilt once.)
+// ---- on-disk cache: "LSD3", journal_id u64, next_usn i64, count u64, then per entry
+// ---- frn u64, parent u64, time i64, size u64, is_dir u8, name_len u16, utf8 name.
+// ---- (Older caches lack sizes; they are ignored and rebuilt once.)
 pub fn data_dir() -> PathBuf {
     PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into())).join("lisdir")
 }
@@ -220,8 +288,8 @@ pub fn save(v: &mut Volume) -> io::Result<()> {
     }
     let p = cache_path(&v.root);
     std::fs::create_dir_all(p.parent().unwrap())?;
-    let mut b = Vec::with_capacity(v.idx.len() * 48);
-    b.extend(b"LSD2");
+    let mut b = Vec::with_capacity(v.idx.len() * 56);
+    b.extend(b"LSD3");
     b.extend(v.journal_id.to_le_bytes());
     b.extend(v.next_usn.to_le_bytes());
     b.extend((v.idx.len() as u64).to_le_bytes());
@@ -229,6 +297,7 @@ pub fn save(v: &mut Volume) -> io::Result<()> {
         b.extend(frn.to_le_bytes());
         b.extend(e.parent.to_le_bytes());
         b.extend(e.time.to_le_bytes());
+        b.extend(e.size.to_le_bytes());
         b.push(e.is_dir as u8);
         b.extend((e.name.len() as u16).to_le_bytes());
         b.extend(e.name.as_bytes());
@@ -242,16 +311,16 @@ pub fn save(v: &mut Volume) -> io::Result<()> {
 
 fn load(root: &str, walk: bool) -> Option<Volume> {
     let b = std::fs::read(cache_path(root)).ok()?;
-    if b.get(..4)? != b"LSD2" {
+    if b.get(..4)? != b"LSD3" {
         return None;
     }
     let (journal_id, next_usn, n) = (rd::<u64>(&b, 4), rd::<i64>(&b, 12), rd::<u64>(&b, 20) as usize);
     let (mut idx, mut off) = (Index::with_capacity(n), 28);
     for _ in 0..n {
-        let nlen = rd::<u16>(&b, off + 25) as usize;
-        let name = String::from_utf8(b.get(off + 27..off + 27 + nlen)?.to_vec()).ok()?;
-        idx.insert(rd(&b, off), Entry::new(rd(&b, off + 8), name, b[off + 24] != 0, rd(&b, off + 16)));
-        off += 27 + nlen;
+        let nlen = rd::<u16>(&b, off + 33) as usize;
+        let name = String::from_utf8(b.get(off + 35..off + 35 + nlen)?.to_vec()).ok()?;
+        idx.insert(rd(&b, off), Entry::new(rd(&b, off + 8), name, b[off + 32] != 0, rd(&b, off + 16)).with_size(rd(&b, off + 24)));
+        off += 35 + nlen;
     }
     Some(Volume { root: root.to_string(), walk, idx, journal_id, next_usn, dirty: false })
 }
@@ -359,13 +428,15 @@ pub fn walk(root: &str, stream: Option<&RwLock<Volume>>) -> Walk {
                         for e in rd.flatten() {
                             let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
                             // the listing already carries the modified time, so this costs no extra round trip
-                            let time = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
+                            let meta = e.metadata().ok();
+                            let time = meta.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
+                            let size = if is_dir { 0 } else { meta.map_or(0, |m| m.len()) };
                             let id = next_id.fetch_add(1, SeqCst);
                             if is_dir {
                                 pending.fetch_add(1, SeqCst);
                                 queue.lock().unwrap().push((id, e.path()));
                             }
-                            found.push((id, Entry::new(parent, e.file_name().to_string_lossy().into_owned(), is_dir, time)));
+                            found.push((id, Entry::new(parent, e.file_name().to_string_lossy().into_owned(), is_dir, time).with_size(size)));
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
@@ -465,6 +536,11 @@ fn matches(q: &Query, idx: &Index, e: &Entry) -> Option<f32> {
             return None;
         }
     }
+    if let Some((min, max)) = q.size {
+        if e.is_dir || e.size < min || e.size > max {
+            return None;
+        }
+    }
     let mut s = 0.0;
     for t in &q.terms {
         s += score(t, &e.lower)?;
@@ -472,8 +548,12 @@ fn matches(q: &Query, idx: &Index, e: &Entry) -> Option<f32> {
     if !q.dirs.iter().all(|d| in_folder(idx, e.parent, d)) {
         return None;
     }
-    // with no words to rank by (a pure filter), newest first
-    let base = if q.terms.is_empty() { e.time as f32 / 1e6 } else { s };
+    // with no words to rank by (a pure filter): biggest first for a size filter, otherwise newest first
+    let base = match (q.terms.is_empty(), q.size.is_some()) {
+        (false, _) => s,
+        (true, true) => e.size as f32,
+        (true, false) => e.time as f32 / 1e6,
+    };
     Some(base + if e.is_dir { 0.0 } else { 1.0 })
 }
 
@@ -670,6 +750,8 @@ mod tests {
             Change::Upsert(11, 10, "new name.txt".into(), false, NOW + 5), // rename
             Change::Upsert(12, 10, "fresh.txt".into(), false, NOW + 9),    // create
             Change::Delete(10),                                             // delete
+            Change::Meta(12, NOW + 20, 4096),                               // size and time from the file record
+            Change::Meta(99, 1, 1),                                         // unknown entry: ignored
         ], 200);
         assert_eq!((v.idx.len(), v.next_usn, v.dirty), (2, 200, true));
         assert_eq!(search(&v.idx, &q("nn"), 5)[0].1, 11);
@@ -680,7 +762,24 @@ mod tests {
         let back = load("Z:", false).unwrap();
         std::fs::remove_file(cache_path("Z:")).unwrap();
         assert_eq!((back.idx.len(), back.next_usn, back.journal_id), (2, 200, 7));
-        assert_eq!((back.idx[&12].name.as_str(), back.idx[&12].time), ("fresh.txt", NOW + 9));
+        assert_eq!((back.idx[&12].name.as_str(), back.idx[&12].time, back.idx[&12].size), ("fresh.txt", NOW + 20, 4096));
+    }
+
+    #[test]
+    fn size_filter_and_order() {
+        let mut i = Index::new();
+        i.insert(1, Entry::new(0, "folder".into(), true, NOW));
+        i.insert(2, Entry::new(1, "small.bin".into(), false, NOW).with_size(10));
+        i.insert(3, Entry::new(1, "big.bin".into(), false, NOW).with_size(5_000_000_000));
+        i.insert(4, Entry::new(1, "mid.bin".into(), false, NOW).with_size(3_000_000));
+        i.insert(5, Entry::new(1, "empty.txt".into(), false, NOW));
+        let ids = |s: &str| search(&i, &q(s), 10).into_iter().map(|h| h.1).collect::<Vec<_>>();
+        assert_eq!(ids("size:>1mb"), [3, 4]); // biggest first, folders never match a size
+        assert_eq!(ids("size:1mb..10gb ext:bin"), [3, 4]);
+        assert_eq!(ids("size:<100"), [2, 5]);
+        assert_eq!(ids("size:empty"), [5]);
+        assert_eq!(ids("big size:>1gb"), [3]); // combines with words
+        assert!(ids("size:>1tb").is_empty());
     }
 
     #[test]
@@ -757,6 +856,30 @@ mod tests {
             let took = t.elapsed();
             assert!(took < Duration::from_millis(1500), "{query:?} took {took:?} over 300k names ({} hits)", hits.len());
         }
+    }
+
+    /// Needs an elevated shell: cargo test --release real_file_records -- --ignored --nocapture
+    /// Reads size and time of every file on C: through the file records and reports the speed.
+    #[test]
+    #[ignore]
+    fn real_file_records() {
+        let h = open_volume('C').expect("run elevated");
+        let mut idx = Index::new();
+        let mut med = MFT_ENUM_DATA_V0 { StartFileReferenceNumber: 0, LowUsn: 0, HighUsn: i64::MAX };
+        let mut buf = vec![0u8; 1 << 20];
+        while let Ok(got) = ioctl(&h, FSCTL_ENUM_USN_DATA, &med, buf.as_mut_ptr(), buf.len()) {
+            med.StartFileReferenceNumber = rd::<u64>(&buf, 0);
+            for r in parse_records(&buf[8..got as usize]) {
+                idx.insert(r.frn, Entry::new(r.parent, r.name, r.is_dir, r.time));
+            }
+        }
+        let t = std::time::Instant::now();
+        fill_meta(&h, &mut idx);
+        let known = idx.values().filter(|e| e.time != 0).count();
+        let big = idx.values().max_by_key(|e| e.size).unwrap();
+        println!("{} entries, metadata in {:?}; biggest: {} ({} bytes)", idx.len(), t.elapsed(), big.name, big.size);
+        assert!(idx.values().any(|e| e.size > 0), "no sizes were read");
+        assert!(known * 10 > idx.len() * 9, "fewer than 90% of the records could be read");
     }
 
     /// Manual benchmark on a few million names: cargo test --release bench_search -- --ignored --nocapture

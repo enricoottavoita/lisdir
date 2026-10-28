@@ -2,6 +2,7 @@
 mod apps;
 mod engine;
 mod icons;
+mod mft;
 mod query;
 mod service;
 mod typesearch;

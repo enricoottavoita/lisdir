@@ -9,7 +9,8 @@
 //! | `folder:` / `file:`     | only folders / only files                            |
 //! | `doc:` `pic:` `video:` `music:` `zip:` | a whole category of extensions        |
 //! | `app:`                  | only apps                                            |
-//! | `date:today` ...        | last change: today, yesterday, week, month, year (rolling 7/30/365 days), or `2026`, `2026-07`, `2026-07-31` |
+//! | `date:today` ...        | last modified: today, yesterday, week, month, year (rolling 7/30/365 days), or `2026`, `2026-07`, `2026-07-31` |
+//! | `size:>1gb`, `size:10mb..1gb`, `size:empty` | file size: `>` `>=` `<` `<=`, a range, or `empty`; units b kb mb gb tb (1024) |
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
 
@@ -69,8 +70,10 @@ pub struct Query {
     /// text that some ancestor folder's name must contain
     pub dirs: Vec<String>,
     pub only: Option<Only>,
-    /// last change, unix seconds, [from, to)
+    /// last modification, unix seconds, [from, to)
     pub date: Option<(i64, i64)>,
+    /// file size in bytes, [min, max]
+    pub size: Option<(u64, u64)>,
     /// `app:` — apps only, no files
     pub apps: bool,
 }
@@ -113,6 +116,49 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
 }
 
+/// "1.5gb", "300", "2k" to bytes. Binary units (1 kb = 1024 bytes), like Explorer.
+fn bytes(v: &str) -> Option<u64> {
+    let at = v.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(v.len());
+    let (num, unit) = v.split_at(at);
+    let mult: f64 = match unit {
+        "" | "b" => 1.0,
+        "k" | "kb" => 1024.0,
+        "m" | "mb" => 1024.0 * 1024.0,
+        "g" | "gb" => 1024.0 * 1024.0 * 1024.0,
+        "t" | "tb" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    let n: f64 = num.parse().ok()?;
+    (n.is_finite() && n >= 0.0).then(|| (n * mult) as u64)
+}
+
+/// `>1gb`, `>=1gb`, `<10mb`, `<=10mb`, `10mb..1gb` (either end may be left out), `empty`, or a bare size.
+fn size_range(v: &str) -> Option<(u64, u64)> {
+    if v == "empty" {
+        return Some((0, 0));
+    }
+    if let Some(r) = v.strip_prefix(">=") {
+        return Some((bytes(r)?, u64::MAX));
+    }
+    if let Some(r) = v.strip_prefix('>') {
+        return Some((bytes(r)?.saturating_add(1), u64::MAX));
+    }
+    if let Some(r) = v.strip_prefix("<=") {
+        return Some((0, bytes(r)?));
+    }
+    if let Some(r) = v.strip_prefix('<') {
+        return Some(match bytes(r)? {
+            0 => (1, 0), // nothing is smaller than zero
+            n => (0, n - 1),
+        });
+    }
+    if let Some((a, b)) = v.split_once("..") {
+        let (lo, hi) = (if a.is_empty() { 0 } else { bytes(a)? }, if b.is_empty() { u64::MAX } else { bytes(b)? });
+        return Some((lo, hi));
+    }
+    bytes(v).map(|n| (n, n))
+}
+
 fn date_range(v: &str, c: &Clock) -> Option<(i64, i64)> {
     let t = c.today();
     let local = |y, m, d| days_from_civil(y, m, d) * DAY - c.offset;
@@ -153,6 +199,8 @@ impl Query {
                 q.ext.extend(exts(e));
             } else if let Some(v) = t.strip_prefix("date:") {
                 q.date = date_range(v, clock).or(q.date); // an unreadable date is ignored, not an error
+            } else if let Some(v) = t.strip_prefix("size:") {
+                q.size = size_range(v).or(q.size); // an unreadable size is ignored, like an unreadable date
             } else if t.ends_with('\\') {
                 let d = t.trim_end_matches('\\');
                 if !d.is_empty() {
@@ -179,7 +227,7 @@ impl Query {
     /// Anything besides plain words (these make a query about files only, never apps).
     pub fn has_filters(&self) -> bool {
         !(self.phrases.is_empty() && self.not.is_empty() && self.ext.is_empty() && self.not_ext.is_empty()
-            && self.dirs.is_empty() && self.only.is_none() && self.date.is_none())
+            && self.dirs.is_empty() && self.only.is_none() && self.date.is_none() && self.size.is_none())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -233,6 +281,26 @@ mod tests {
         assert!(p("calc").wants_apps()); // plain words also look for apps
         assert!(!p("calc ext:exe").wants_apps()); // any filter makes it a file query
         assert!(!p("-old calc").wants_apps());
+    }
+
+    #[test]
+    fn sizes() {
+        const KB: u64 = 1024;
+        const MB: u64 = KB * KB;
+        const GB: u64 = MB * KB;
+        assert_eq!(p("size:>1gb").size, Some((GB + 1, u64::MAX)));
+        assert_eq!(p("size:>=1gb").size, Some((GB, u64::MAX)));
+        assert_eq!(p("size:<10mb").size, Some((0, 10 * MB - 1)));
+        assert_eq!(p("size:<=10MB").size, Some((0, 10 * MB)));
+        assert_eq!(p("size:10mb..1gb").size, Some((10 * MB, GB)));
+        assert_eq!(p("size:..5k").size, Some((0, 5 * KB)));
+        assert_eq!(p("size:1.5mb..").size, Some((MB + MB / 2, u64::MAX)));
+        assert_eq!(p("size:empty").size, Some((0, 0)));
+        assert_eq!(p("size:300").size, Some((300, 300)));
+        assert_eq!(p("size:<0").size, Some((1, 0))); // matches nothing
+        assert_eq!(p("size:big").size, None); // unreadable: ignored
+        assert_eq!(p("size:>1xb").size, None);
+        assert!(p("size:>1gb").has_filters() && !p("size:>1gb").wants_apps());
     }
 
     #[test]

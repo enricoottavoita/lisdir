@@ -46,12 +46,13 @@ Le parole semplici cercano nei nomi dei file; il resto restringe i risultati. Si
 | `doc:` `pic:` `video:` `music:` `zip:` | un'intera categoria di tipi di file |
 | `date:today`, `yesterday`, `week`, `month`, `year` | modificati oggi / ieri / negli ultimi 7, 30, 365 giorni |
 | `date:2026`, `date:2026-07`, `date:2026-07-31` | modificati in quell'anno / mese / giorno |
+| `size:>1gb`, `size:<10mb`, `size:10mb..1gb`, `size:empty` | dimensione del file (`>` `>=` `<` `<=`, un intervallo, o vuoto); unità kb mb gb tb |
 | `app:` | solo app |
 
-Le parole chiave sono in inglese, qualunque sia la lingua dell'interfaccia. `date:` usa l'ultima modifica di ogni
-file (su NTFS, l'ora dell'ultima voce del journal; per le cartelle di rete, la data di modifica). Parole e filtri
-si combinano: `relazione ext:pdf date:month -bozza`. Con soli filtri e nessuna parola, i file più recenti vengono
-per primi.
+Le parole chiave sono in inglese, qualunque sia la lingua dell'interfaccia. `date:` e `size:` usano la data di
+modifica e la dimensione del file, lette dal record NTFS (per le cartelle di rete, dall'elenco della cartella). Un
+filtro `size:` trova solo file. Parole e filtri si combinano: `relazione ext:pdf date:month -bozza`. Con soli filtri
+e nessuna parola, i file più recenti vengono per primi; con `size:`, i più grandi.
 
 ## Come funziona
 
@@ -99,8 +100,9 @@ cargo build --release
 - L'elenco delle app viene letto all'avvio di lisdir: un'app appena installata compare dopo un riavvio.
 - "Digita per cercare" non controlla se c'è qualcosa di selezionato e non funziona sopra finestre elevate.
 - I diritti di amministratore servono una volta, per configurare l'helper elevato; poi la barra non li richiede.
-- Non c'è ancora il filtro `size:` (l'indice non memorizza le dimensioni). `date:` è l'ultima modifica, non
-  esattamente la data di modifica.
+- Le dimensioni non sono ancora mostrate nei risultati. Dopo l'aggiornamento ogni disco locale viene riletto una volta
+  per raccogliere dimensioni e date, e ci vuole più tempo di prima. Un file i cui dati stanno in una lista di
+  attributi NTFS risulta di dimensione 0.
 - Non ancora presenti: menu azioni e anteprima, finestra delle impostazioni con scorciatoia configurabile,
   integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 
