@@ -37,6 +37,8 @@ struct App {
     apps_at: std::sync::Mutex<Option<std::time::Instant>>,
     /// what you open: boosts frequent results and feeds the recent list
     usage: std::sync::Mutex<usage::Usage>,
+    /// pinned items, listed first; kept in the same file format as `usage` (newest pin first)
+    pins: std::sync::Mutex<usage::Usage>,
     /// rendered icons by `icons::key`. ponytail: unbounded, but one entry per file type (plus one per program/shortcut shown).
     icons: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
     /// number of network walks in progress; non-zero shows "Indexing…"
@@ -99,6 +101,7 @@ fn reload_apps(app: &App) {
 /// Start the network walks and make sure the elevated helper is running.
 fn start(app: &App) {
     *app.usage.lock().unwrap() = usage::Usage::load(engine::data_dir().join("usage.txt"));
+    *app.pins.lock().unwrap() = usage::Usage::load(engine::data_dir().join("pins.txt"));
     std::thread::spawn(|| {
         if service::query("").is_none() {
             service::start_helper(); // no-op (fails quietly) until the service has been installed
@@ -114,12 +117,21 @@ fn start(app: &App) {
     }
 }
 
-/// The items you opened most recently, shown before you type anything.
-fn recents(app: &App) -> Vec<Hit> {
-    app.usage.lock().unwrap().recent(10).into_iter().map(|(path, i)| match path.strip_prefix(r"shell:AppsFolder\") {
+/// The newest `n` items of a list, as results.
+fn listed(u: &usage::Usage, n: usize) -> Vec<Hit> {
+    u.recent(n).into_iter().map(|(path, i)| match path.strip_prefix(r"shell:AppsFolder\") {
         Some(id) if i.app => Hit::app(&i.name, id, 0.0),
         _ => Hit::new(i.name.clone(), path.to_string(), i.is_dir, 0.0),
     }).collect()
+}
+
+/// Before you type anything: your pinned items, then the items you opened most recently.
+fn recents(app: &App) -> Vec<Hit> {
+    let mut hits = listed(&app.pins.lock().unwrap(), 50);
+    hits.iter_mut().for_each(|h| h.pinned = true);
+    let recent: Vec<Hit> = listed(&app.usage.lock().unwrap(), 10 + hits.len()).into_iter().filter(|h| !hits.iter().any(|p| p.path == h.path)).take(10).collect();
+    hits.extend(recent);
+    hits
 }
 
 #[tauri::command]
@@ -143,10 +155,40 @@ async fn search(q: String, app: State<'_, App>) -> Result<Vec<Hit>, String> {
         let usage = app.usage.lock().unwrap();
         hits.iter_mut().for_each(|h| h.score += usage.boost(&h.path));
     }
-    hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let pins = app.pins.lock().unwrap();
+    hits.iter_mut().for_each(|h| h.pinned = pins.has(&h.path));
+    // pinned results first, each group by score
+    hits.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.score.total_cmp(&a.score)));
     hits.truncate(20);
     hits.iter_mut().for_each(|h| h.hl = engine::highlight(&query, &h.name));
     Ok(hits)
+}
+
+/// Pin a result so it is listed first, or unpin it.
+#[tauri::command]
+fn pin(path: String, name: String, is_dir: bool, app: bool, state: State<App>) {
+    let mut pins = state.pins.lock().unwrap();
+    if pins.has(&path) {
+        pins.forget(&path);
+    } else {
+        pins.record(&path, &name, is_dir, app, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64));
+    }
+}
+
+/// Preview of a result: b't' + the start of a text file, or b'i' + a PNG (the shell's thumbnail or big icon).
+#[tauri::command]
+async fn preview(path: String, is_dir: bool) -> Result<tauri::ipc::Response, String> {
+    Ok(tauri::ipc::Response::new(match (!is_dir).then(|| actions::text_start(&path)).flatten() {
+        Some(text) => [b"t".as_slice(), text.as_bytes()].concat(),
+        None => [b"i".as_slice(), &icons::thumbnail_png(&path, 512).ok_or("no preview")?].concat(),
+    }))
+}
+
+/// Show or hide the preview pane: the bar gets wider so the list keeps its width.
+#[tauri::command]
+fn pane(on: bool, w: WebviewWindow) {
+    let _ = w.set_size(tauri::LogicalSize::new(if on { 1100.0 } else { 700.0 }, 440.0));
+    let _ = w.center();
 }
 
 /// Take an item out of the recent list (and out of the habit boost); no path clears them all.
@@ -407,7 +449,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, act, hide, take_pending, version, lang, icon, forget])
+        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, forget])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

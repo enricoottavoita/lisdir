@@ -98,6 +98,16 @@ pub fn terminal(path: &str, is_dir: bool) {
     }
 }
 
+/// The start of a text file (its first 64 KB), or None if it looks binary: a NUL byte in there.
+/// ponytail: UTF-16 text has NULs, so it previews as a thumbnail; decode it if anyone asks.
+pub fn text_start(path: &str) -> Option<String> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    std::fs::File::open(path).ok()?.take(64 * 1024).read_to_end(&mut buf).ok()?;
+    let text = buf.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&buf); // UTF-8 byte order mark
+    (!text.contains(&0)).then(|| String::from_utf8_lossy(text).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +125,19 @@ mod tests {
             }
             GlobalFree(h);
         }
+    }
+
+    #[test]
+    fn text_or_binary() {
+        let dir = std::env::temp_dir().join("lisdir_text_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (t, b) = (dir.join("a.txt"), dir.join("b.bin"));
+        std::fs::write(&t, "\u{feff}ciao\ncittà").unwrap();
+        std::fs::write(&b, [0x89, b'P', 0, 1]).unwrap();
+        assert_eq!(text_start(t.to_str().unwrap()).as_deref(), Some("ciao\ncittà"));
+        assert_eq!(text_start(b.to_str().unwrap()), None);
+        assert_eq!(text_start(dir.join("missing").to_str().unwrap()), None);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Replaces your clipboard, so run by hand: cargo test clipboard -- --ignored

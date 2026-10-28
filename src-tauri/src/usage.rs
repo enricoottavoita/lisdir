@@ -55,6 +55,10 @@ impl Usage {
         let _ = self.save();
     }
 
+    pub fn has(&self, path: &str) -> bool {
+        self.items.contains_key(path)
+    }
+
     pub fn forget(&mut self, path: &str) {
         if self.items.remove(path).is_some() {
             let _ = self.save();

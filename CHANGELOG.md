@@ -16,6 +16,11 @@ when releasing.
   folder pastes or moves it), copy path (`Ctrl+Shift+C`), open with, open terminal here (`Ctrl+T`, Windows Terminal
   or else a console) and properties (`Alt+Enter`). The shortcuts work with the menu closed too; with text selected in
   the search box, `Ctrl+C` and `Ctrl+X` still copy the text.
+- Preview pane (`Alt+P`, remembered): the bar widens and shows the start of a text file (first 64 KB), or the
+  picture Explorer shows in Large icons view (thumbnails of photos, videos, PDFs; a big icon otherwise). It is read
+  only once the selection rests for 80 ms, so moving through the list stays as fast as before.
+- Pins: `Ctrl+P` (or **Pin to top** in the action menu) pins a file, folder or app. Pinned items are listed
+  first, with a 📌, before you type anything and whenever they match your search. `Ctrl+P` again unpins.
 
 ## [0.14.3] - 2026-10-28
 

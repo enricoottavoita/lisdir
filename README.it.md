@@ -32,6 +32,8 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Azioni su un risultato.** `→`, `Ctrl+O` o il clic destro aprono un menu: copia o taglia il file (`Ctrl+C` /
   `Ctrl+X`, poi incollalo in Esplora risorse), copia il percorso (`Ctrl+Maiusc+C`), apri con, apri un terminale lì
   (`Ctrl+T`), proprietà (`Alt+Invio`). Le scorciatoie funzionano anche a menu chiuso.
+- **Anteprima e preferiti fissati.** `Alt+P` mostra un riquadro di anteprima: l'inizio di un file di testo, o una
+  miniatura. `Ctrl+P` fissa un risultato in cima, così compare sempre per primo.
 - **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic,
   dopo aver verificato lo SHA-256. Questo controllo è l'unica richiesta internet che lisdir fa.
 - **Interfaccia senza privilegi di amministratore.** La barra gira come utente normale; solo un piccolo
@@ -116,7 +118,7 @@ cargo build --release
 - La prima scansione di un disco locale legge un record per file per raccogliere dimensioni e date: circa 11 secondi in
   più per milione di file, una volta per disco (e di nuovo se cambia il formato della cache).
 - Non si possono ancora ordinare i risultati per dimensione o data, e `size:` non trova le cartelle.
-- Non ancora presenti: riquadro di anteprima, finestra delle impostazioni con scorciatoia configurabile,
+- Non ancora presenti: finestra delle impostazioni con scorciatoia configurabile,
   integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 
 ## Licenza

@@ -50,13 +50,15 @@ pub struct Hit {
     pub hl: Vec<usize>,
     /// bytes (a folder: the files below it); 0 for apps and when unknown (the UI shows nothing then)
     pub size: u64,
+    /// pinned by the user: listed first (filled in by the UI process, not sent over the pipe)
+    pub pinned: bool,
     #[serde(skip)]
     pub score: f32,
 }
 
 impl Hit {
     pub fn new(name: String, path: String, is_dir: bool, score: f32) -> Self {
-        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], size: 0, name, path, is_dir, score }
+        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], size: 0, pinned: false, name, path, is_dir, score }
     }
 
     pub fn with_size(mut self, size: u64) -> Self {
@@ -65,7 +67,7 @@ impl Hit {
     }
 
     pub fn app(name: &str, id: &str, score: f32) -> Self {
-        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, size: 0, score }
+        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, size: 0, pinned: false, score }
     }
 }
 
