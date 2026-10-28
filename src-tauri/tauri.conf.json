@@ -1,6 +1,6 @@
 {
   "productName": "lisdir",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "identifier": "dev.lisdir.app",
   "build": { "frontendDist": "../ui" },
   "app": {

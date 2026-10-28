@@ -1,6 +1,6 @@
 //! Start menu and Store apps, so the bar doubles as a launcher: apps are matched with the same fuzzy
 //! scorer as files and ranked together with them.
-use crate::engine;
+use crate::{engine, query::Query};
 use std::{collections::HashSet, os::windows::process::CommandExt};
 
 pub struct App {
@@ -35,10 +35,18 @@ pub fn load() -> Vec<App> {
         .unwrap_or_default()
 }
 
-/// Matching apps as (score, app), best first.
-pub fn search<'a>(apps: &'a [App], query: &str, limit: usize) -> Vec<(f32, &'a App)> {
-    let mut hits: Vec<_> = apps.iter().filter_map(|a| engine::score(query, &a.lower).map(|s| (s + BONUS, a))).collect();
-    hits.sort_by(|a, b| b.0.total_cmp(&a.0));
+/// Apps whose name matches every word of the query, as (score, app), best first. With no words (`app:` alone)
+/// it lists apps alphabetically.
+pub fn search<'a>(apps: &'a [App], query: &Query, limit: usize) -> Vec<(f32, &'a App)> {
+    let mut hits: Vec<_> = apps
+        .iter()
+        .filter_map(|a| query.terms.iter().try_fold(BONUS, |s, w| engine::score(w, &a.lower).map(|x| s + x)).map(|s| (s, a)))
+        .collect();
+    if query.terms.is_empty() {
+        hits.sort_by(|a, b| a.1.lower.cmp(&b.1.lower));
+    } else {
+        hits.sort_by(|a, b| b.0.total_cmp(&a.0));
+    }
     hits.truncate(limit);
     hits
 }
@@ -46,13 +54,18 @@ pub fn search<'a>(apps: &'a [App], query: &str, limit: usize) -> Vec<(f32, &'a A
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::Clock;
 
     #[test]
     fn parses_and_ranks_apps() {
         let apps = parse("Calcolatrice\tMicrosoft.WindowsCalculator_8wekyb3d8bbwe!App\r\nGoogle Chrome\tChrome\r\nBlocco note\tnotepad.exe\r\nDuplicato\tChrome\r\n\r\nSenzaId\t\r\n");
         assert_eq!(apps.len(), 3); // duplicate id, empty line and empty id are dropped
-        assert_eq!(search(&apps, "chr", 5)[0].1.name, "Google Chrome");
-        assert_eq!(search(&apps, "calc", 5)[0].1.id, "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
-        assert!(search(&apps, "zzz", 5).is_empty());
+        let q = |s: &str| Query::parse(s, &Clock::new(0, 0));
+        assert_eq!(search(&apps, &q("chr"), 5)[0].1.name, "Google Chrome");
+        assert_eq!(search(&apps, &q("calc"), 5)[0].1.id, "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
+        assert_eq!(search(&apps, &q("note blo"), 5)[0].1.name, "Blocco note"); // every word, any order
+        assert!(search(&apps, &q("zzz"), 5).is_empty());
+        assert_eq!(search(&apps, &q("app:"), 5).len(), 3); // no words: everything, A to Z
+        assert_eq!(search(&apps, &q("app:"), 5)[0].1.name, "Blocco note");
     }
 }

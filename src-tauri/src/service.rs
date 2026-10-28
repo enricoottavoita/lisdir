@@ -4,7 +4,7 @@
 //!
 //! Wire format, one request per line: `S\t<query>\n`. Reply: `H\t<score>\t<is_dir>\t<name>\t<path>\n`*
 //! then `E\t<busy 0|1>\t<item count>\n`. An empty query returns only the `E` line (a status probe).
-use crate::engine;
+use crate::{engine, query::{Clock, Query}};
 use serde::Serialize;
 use std::{
     fs::{File, OpenOptions},
@@ -45,17 +45,19 @@ pub struct Hit {
     pub icon: String,
     /// a launchable app (Start menu / Store) rather than a file: `path` is then a `shell:AppsFolder\...` target
     pub app: bool,
+    /// char positions of `name` to highlight (filled in by the UI process, not sent over the pipe)
+    pub hl: Vec<usize>,
     #[serde(skip)]
     pub score: f32,
 }
 
 impl Hit {
     pub fn new(name: String, path: String, is_dir: bool, score: f32) -> Self {
-        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, name, path, is_dir, score }
+        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], name, path, is_dir, score }
     }
 
     pub fn app(name: &str, id: &str, score: f32) -> Self {
-        Hit { icon: format!("app:{id}"), app: true, name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, score }
+        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, score }
     }
 }
 
@@ -70,11 +72,8 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 /// Best 20 matches across all volumes, highest score first.
-pub fn search_volumes(vols: &Volumes, q: &str) -> Vec<Hit> {
+pub fn search_volumes(vols: &Volumes, q: &Query) -> Vec<Hit> {
     let mut hits = vec![];
-    if q.trim().is_empty() {
-        return hits;
-    }
     for vol in vols.read().unwrap().iter() {
         let v = vol.read().unwrap();
         hits.extend(engine::search(&v.idx, q, 20).into_iter().map(|(score, f)| {
@@ -170,7 +169,7 @@ fn pipe_security() -> Option<SECURITY_ATTRIBUTES> {
 fn answer(q: &str, vols: &Volumes, busy: &AtomicUsize) -> String {
     let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
     let mut out = String::new();
-    for h in search_volumes(vols, q) {
+    for h in search_volumes(vols, &Query::parse(q, &Clock::system())) {
         out += &format!("H\t{}\t{}\t{}\t{}\n", h.score, h.is_dir as u8, clean(&h.name), clean(&h.path));
     }
     out + &format!("E\t{}\t{}\n", (busy.load(SeqCst) > 0) as u8, count(vols))
@@ -219,6 +218,30 @@ pub fn run_helper() {
             std::thread::sleep(Duration::from_secs(1));
             h = instance();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn answers_filtered_queries_in_the_wire_format() {
+        let vols: Volumes = Arc::new(RwLock::new(vec![Arc::new(RwLock::new(engine::sample_volume()))]));
+        let busy = AtomicUsize::new(0);
+        let lines = |q: &str| answer(q, &vols, &busy).lines().map(String::from).collect::<Vec<_>>();
+
+        // filters travel as plain text and are parsed on the helper's side
+        let r = lines("report ext:pdf -draft");
+        assert_eq!(r.len(), 2);
+        let f: Vec<&str> = r[0].split('\t').collect();
+        assert_eq!((f[0], f[2], f[3], f[4]), ("H", "0", "report 2024.pdf", r"C:\Docs\report 2024.pdf"));
+        assert!(f[1].parse::<f32>().is_ok());
+        assert_eq!(r[1], "E\t0\t3"); // not busy, three indexed items
+
+        assert_eq!(lines(r"docs\ report").len(), 3); // both reports are in a folder containing "docs"
+        assert_eq!(lines(""), ["E\t0\t3"]); // an empty query is a status probe
+        assert_eq!(lines("app: report"), ["E\t0\t3"]); // apps only: no file hits
     }
 }
 

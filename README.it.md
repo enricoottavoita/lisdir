@@ -19,7 +19,10 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Digita per cercare.** Con una cartella di Esplora risorse o il Desktop in primo piano, scrivere delle lettere
   apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona).
 - **Ricerca approssimata.** `rdme` trova `README.md`; inizi di parola e lettere consecutive
-  valgono di più.
+  valgono di più. Più parole si trovano in qualsiasi ordine e le lettere trovate sono evidenziate.
+- **Sintassi di ricerca.** Restringi con `ext:pdf`, `date:week`, `-bozza`, `"frase esatta"`, `docs\ relazione`: vedi sotto.
+- **Elementi recenti.** Apri la barra senza scrivere per vedere cosa hai aperto di recente (`Canc` ne rimuove uno).
+  Ciò che apri spesso sale un poco, ma conta sempre di più quanto il nome corrisponde.
 - **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.
 - **Icone dei file.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto, documenti e
   archivi si distinguono subito.
@@ -27,6 +30,28 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Interfaccia senza privilegi di amministratore.** La barra gira come utente normale; solo un piccolo
   programma in background è elevato.
 - **Italiano e inglese.** La lingua segue quella di Windows.
+
+## Sintassi di ricerca
+
+Le parole semplici cercano nei nomi dei file; il resto restringe i risultati. Si può combinare tutto.
+
+| Scrivi | Significato |
+|---|---|
+| `relazione 2024` | nomi che contengono entrambe le parole, in qualsiasi ordine (approssimata) |
+| `ext:pdf;docx` oppure `*.pdf` | solo queste estensioni |
+| `-bozza` / `-ext:tmp` | il nome non deve contenere `bozza` / non questa estensione |
+| `"relazione annuale"` | la frase esatta nel nome |
+| `docs\ relazione` | "relazione" dentro una cartella il cui nome contiene "docs" |
+| `folder:` / `file:` | solo cartelle / solo file |
+| `doc:` `pic:` `video:` `music:` `zip:` | un'intera categoria di tipi di file |
+| `date:today`, `yesterday`, `week`, `month`, `year` | modificati oggi / ieri / negli ultimi 7, 30, 365 giorni |
+| `date:2026`, `date:2026-07`, `date:2026-07-31` | modificati in quell'anno / mese / giorno |
+| `app:` | solo app |
+
+Le parole chiave sono in inglese, qualunque sia la lingua dell'interfaccia. `date:` usa l'ultima modifica di ogni
+file (su NTFS, l'ora dell'ultima voce del journal; per le cartelle di rete, la data di modifica). Parole e filtri
+si combinano: `relazione ext:pdf date:month -bozza`. Con soli filtri e nessuna parola, i file più recenti vengono
+per primi.
 
 ## Come funziona
 
@@ -72,9 +97,10 @@ cargo build --release
 - L'elenco delle app viene letto all'avvio di lisdir: un'app appena installata compare dopo un riavvio.
 - "Digita per cercare" non controlla se c'è qualcosa di selezionato e non funziona sopra finestre elevate.
 - I diritti di amministratore servono una volta, per configurare l'helper elevato; poi la barra non li richiede.
-- Non ancora presenti: ordinamento in base a quanto usi i file, filtri di ricerca, evidenziazione delle lettere
-  trovate, menu azioni e anteprima, finestra delle impostazioni con scorciatoia configurabile, integrazione con i
-  dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
+- Non c'è ancora il filtro `size:` (l'indice non memorizza le dimensioni). `date:` è l'ultima modifica, non
+  esattamente la data di modifica.
+- Non ancora presenti: menu azioni e anteprima, finestra delle impostazioni con scorciatoia configurabile,
+  integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 
 ## Licenza
 

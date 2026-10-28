@@ -2,9 +2,12 @@
 mod apps;
 mod engine;
 mod icons;
+mod query;
 mod service;
 mod typesearch;
+mod usage;
 
+use query::{Clock, Query};
 use service::{Hit, Shared, Volumes};
 use std::{
     os::windows::process::CommandExt,
@@ -27,6 +30,8 @@ struct App {
     network: Volumes,
     /// Start menu and Store apps, loaded in the background at startup
     apps: Arc<RwLock<Vec<apps::App>>>,
+    /// what you open: boosts frequent results and feeds the recent list
+    usage: std::sync::Mutex<usage::Usage>,
     /// rendered icons by `icons::key`. ponytail: unbounded, but one entry per file type (plus one per program/shortcut shown).
     icons: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
     /// number of network walks in progress; non-zero shows "Indexing…"
@@ -64,6 +69,7 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
 
 /// Start the network walks and make sure the elevated helper is running.
 fn start(app: &App) {
+    *app.usage.lock().unwrap() = usage::Usage::load(engine::data_dir().join("usage.txt"));
     std::thread::spawn(|| {
         if service::query("").is_none() {
             service::start_helper(); // no-op (fails quietly) until the service has been installed
@@ -80,18 +86,45 @@ fn start(app: &App) {
     }
 }
 
+/// The items you opened most recently, shown before you type anything.
+fn recents(app: &App) -> Vec<Hit> {
+    app.usage.lock().unwrap().recent(10).into_iter().map(|(path, i)| match path.strip_prefix(r"shell:AppsFolder\") {
+        Some(id) if i.app => Hit::app(&i.name, id, 0.0),
+        _ => Hit::new(i.name.clone(), path.to_string(), i.is_dir, 0.0),
+    }).collect()
+}
+
 #[tauri::command]
 async fn search(q: String, app: State<'_, App>) -> Result<Vec<Hit>, String> {
-    let mut hits = service::search_volumes(&app.network, &q);
-    if !q.trim().is_empty() {
+    let query = Query::parse(&q, &Clock::system());
+    if query.is_empty() {
+        return Ok(recents(&app));
+    }
+    let mut hits = vec![];
+    if query.searches_files() {
+        hits = service::search_volumes(&app.network, &query);
         hits.extend(service::query(&q).map(|r| r.hits).unwrap_or_default());
         // apps are ranked together with files; their Start menu shortcuts would only duplicate them
         hits.retain(|h| !(h.path.contains(r"\Start Menu\Programs\") && h.path.to_lowercase().ends_with(".lnk")));
-        hits.extend(apps::search(&app.apps.read().unwrap(), &q, 20).into_iter().map(|(score, a)| Hit::app(&a.name, &a.id, score)));
+    }
+    if query.wants_apps() {
+        hits.extend(apps::search(&app.apps.read().unwrap(), &query, 20).into_iter().map(|(score, a)| Hit::app(&a.name, &a.id, score)));
+    }
+    if !query.terms.is_empty() {
+        // habits only nudge the order: how well the name matches still comes first
+        let usage = app.usage.lock().unwrap();
+        hits.iter_mut().for_each(|h| h.score += usage.boost(&h.path));
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
     hits.truncate(20);
+    hits.iter_mut().for_each(|h| h.hl = engine::highlight(&query, &h.name));
     Ok(hits)
+}
+
+/// Take an item out of the recent list (and out of the habit boost).
+#[tauri::command]
+fn forget(path: String, app: State<App>) {
+    app.usage.lock().unwrap().forget(&path);
 }
 
 /// (indexing in progress, item count, helper reachable)
@@ -106,7 +139,9 @@ async fn status(app: State<'_, App>) -> Result<(bool, usize, bool), String> {
 
 /// folder=true reveals the item in Explorer, otherwise opens it with its default app.
 #[tauri::command]
-fn open(path: String, folder: bool) {
+fn open(path: String, folder: bool, name: String, is_dir: bool, app: bool, state: State<App>) {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    state.usage.lock().unwrap().record(&path, &name, is_dir, app, now);
     if folder {
         let _ = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
     } else {
@@ -167,6 +202,8 @@ fn show(app: &AppHandle) {
             app.state::<App>().focused.store(false, Ordering::SeqCst);
             let _ = w.show();
             let _ = w.set_focus();
+            // Tell the page it was just opened (the DOM focus event is not reliable on the first show).
+            let _ = w.eval("window.opened && window.opened()");
         }
     }
 }
@@ -272,7 +309,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending, version, lang, icon])
+        .invoke_handler(tauri::generate_handler![search, status, open, hide, take_pending, version, lang, icon, forget])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

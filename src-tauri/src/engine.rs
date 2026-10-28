@@ -1,5 +1,6 @@
 //! NTFS file index: full MFT enumeration (FSCTL_ENUM_USN_DATA), live updates by tailing the USN journal,
 //! an on-disk cache, and fuzzy name search. Needs an elevated process (raw volume handle).
+use crate::query::{Only, Query};
 use std::{
     collections::HashMap,
     ffi::c_void,
@@ -8,7 +9,7 @@ use std::{
     path::PathBuf,
     ptr::null_mut,
     sync::{atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst}, Mutex},
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_HANDLE_EOF, HANDLE, INVALID_HANDLE_VALUE},
@@ -31,11 +32,14 @@ pub struct Entry {
     pub name: String,
     lower: String,
     pub is_dir: bool,
+    /// last change, unix seconds (0 = unknown). On NTFS this is the time of the file's last USN journal record,
+    /// which tracks the last modification closely but also moves on renames and permission changes.
+    time: i64,
 }
 
 impl Entry {
-    fn new(parent: u64, name: String, is_dir: bool) -> Self {
-        Entry { parent, lower: name.to_lowercase(), name, is_dir }
+    fn new(parent: u64, name: String, is_dir: bool, time: i64) -> Self {
+        Entry { parent, lower: name.to_lowercase(), name, is_dir, time }
     }
 }
 
@@ -57,18 +61,24 @@ pub struct Volume {
 struct Rec {
     frn: u64,
     parent: u64,
+    time: i64,
     reason: u32,
     is_dir: bool,
     name: String,
 }
 
 pub enum Change {
-    Upsert(u64, u64, String, bool),
+    Upsert(u64, u64, String, bool, i64),
     Delete(u64),
 }
 
 fn rd<T: Copy>(b: &[u8], off: usize) -> T {
     unsafe { (b.as_ptr().add(off) as *const T).read_unaligned() }
+}
+
+/// FILETIME (100 ns ticks since 1601) to unix seconds.
+fn filetime_to_unix(ft: i64) -> i64 {
+    (ft / 10_000_000 - 11_644_473_600).max(0)
 }
 
 /// Decode the records of an ENUM/READ output buffer (after its 8-byte header).
@@ -79,7 +89,7 @@ fn parse_records(buf: &[u8]) -> Vec<Rec> {
         if len == 0 || off + len > buf.len() {
             break;
         }
-        // USN_RECORD_V2 layout: frn@8, parent@16, usn@24, reason@40, attrs@52, name_len@56, name_off@58
+        // USN_RECORD_V2 layout: frn@8, parent@16, usn@24, time@32, reason@40, attrs@52, name_len@56, name_off@58
         let (nlen, noff) = (rd::<u16>(buf, off + 56) as usize, rd::<u16>(buf, off + 58) as usize);
         let units: Vec<u16> = buf[off + noff..off + noff + nlen]
             .chunks_exact(2)
@@ -88,6 +98,7 @@ fn parse_records(buf: &[u8]) -> Vec<Rec> {
         out.push(Rec {
             frn: rd(buf, off + 8),
             parent: rd(buf, off + 16),
+            time: filetime_to_unix(rd(buf, off + 32)),
             reason: rd(buf, off + 40),
             is_dir: rd::<u32>(buf, off + 52) & 0x10 != 0,
             name: String::from_utf16_lossy(&units),
@@ -142,7 +153,7 @@ pub fn scan_volume(letter: char) -> Result<Volume, String> {
             Ok(got) => {
                 med.StartFileReferenceNumber = rd::<u64>(&buf, 0);
                 for r in parse_records(&buf[8..got as usize]) {
-                    idx.insert(r.frn, Entry::new(r.parent, r.name, r.is_dir));
+                    idx.insert(r.frn, Entry::new(r.parent, r.name, r.is_dir, r.time));
                 }
             }
             Err(ERROR_HANDLE_EOF) => break,
@@ -171,7 +182,7 @@ pub fn read_changes(v: &Volume) -> Result<(Vec<Change>, i64), String> {
         let got = ioctl(&h, FSCTL_READ_USN_JOURNAL, &q, buf.as_mut_ptr(), buf.len()).map_err(|e| format!("journal read failed: error {e}"))?;
         let new_next = rd::<i64>(&buf, 0);
         for r in parse_records(&buf[8..got as usize]) {
-            out.push(if r.reason & REASON_DELETE != 0 { Change::Delete(r.frn) } else { Change::Upsert(r.frn, r.parent, r.name, r.is_dir) });
+            out.push(if r.reason & REASON_DELETE != 0 { Change::Delete(r.frn) } else { Change::Upsert(r.frn, r.parent, r.name, r.is_dir, r.time) });
         }
         if got <= 8 {
             return Ok((out, new_next)); // no more records: new_next is the journal's current end
@@ -184,15 +195,16 @@ pub fn apply(v: &mut Volume, changes: Vec<Change>, next_usn: i64) {
     v.dirty |= !changes.is_empty();
     for c in changes {
         match c {
-            Change::Upsert(frn, parent, name, is_dir) => { v.idx.insert(frn, Entry::new(parent, name, is_dir)); }
+            Change::Upsert(frn, parent, name, is_dir, time) => { v.idx.insert(frn, Entry::new(parent, name, is_dir, time)); }
             Change::Delete(frn) => { v.idx.remove(&frn); }
         }
     }
     v.next_usn = next_usn;
 }
 
-// ---- on-disk cache: "LSD1", journal_id u64, next_usn i64, count u64, then per entry
-// ---- frn u64, parent u64, is_dir u8, name_len u16, utf8 name.
+// ---- on-disk cache: "LSD2", journal_id u64, next_usn i64, count u64, then per entry
+// ---- frn u64, parent u64, time i64, is_dir u8, name_len u16, utf8 name.
+// ---- (An older "LSD1" cache has no times; it is ignored and rebuilt once.)
 pub fn data_dir() -> PathBuf {
     PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into())).join("lisdir")
 }
@@ -208,14 +220,15 @@ pub fn save(v: &mut Volume) -> io::Result<()> {
     }
     let p = cache_path(&v.root);
     std::fs::create_dir_all(p.parent().unwrap())?;
-    let mut b = Vec::with_capacity(v.idx.len() * 40);
-    b.extend(b"LSD1");
+    let mut b = Vec::with_capacity(v.idx.len() * 48);
+    b.extend(b"LSD2");
     b.extend(v.journal_id.to_le_bytes());
     b.extend(v.next_usn.to_le_bytes());
     b.extend((v.idx.len() as u64).to_le_bytes());
     for (frn, e) in &v.idx {
         b.extend(frn.to_le_bytes());
         b.extend(e.parent.to_le_bytes());
+        b.extend(e.time.to_le_bytes());
         b.push(e.is_dir as u8);
         b.extend((e.name.len() as u16).to_le_bytes());
         b.extend(e.name.as_bytes());
@@ -229,16 +242,16 @@ pub fn save(v: &mut Volume) -> io::Result<()> {
 
 fn load(root: &str, walk: bool) -> Option<Volume> {
     let b = std::fs::read(cache_path(root)).ok()?;
-    if b.get(..4)? != b"LSD1" {
+    if b.get(..4)? != b"LSD2" {
         return None;
     }
     let (journal_id, next_usn, n) = (rd::<u64>(&b, 4), rd::<i64>(&b, 12), rd::<u64>(&b, 20) as usize);
     let (mut idx, mut off) = (Index::with_capacity(n), 28);
     for _ in 0..n {
-        let nlen = rd::<u16>(&b, off + 17) as usize;
-        let name = String::from_utf8(b.get(off + 19..off + 19 + nlen)?.to_vec()).ok()?;
-        idx.insert(rd(&b, off), Entry::new(rd(&b, off + 8), name, b[off + 16] != 0));
-        off += 19 + nlen;
+        let nlen = rd::<u16>(&b, off + 25) as usize;
+        let name = String::from_utf8(b.get(off + 27..off + 27 + nlen)?.to_vec()).ok()?;
+        idx.insert(rd(&b, off), Entry::new(rd(&b, off + 8), name, b[off + 24] != 0, rd(&b, off + 16)));
+        off += 27 + nlen;
     }
     Some(Volume { root: root.to_string(), walk, idx, journal_id, next_usn, dirty: false })
 }
@@ -266,6 +279,9 @@ pub fn live(v: &Volume) -> bool {
 
 /// Re-walk interval for network roots. ponytail: full re-walk, no change detection over SMB.
 pub const WALK_INTERVAL: Duration = Duration::from_secs(600);
+
+/// How soon to retry a walk that could not be trusted (share offline, drive unplugged).
+pub const RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 fn is_remote(letter: char) -> bool {
     let p: Vec<u16> = format!("{letter}:\\").encode_utf16().chain([0]).collect();
@@ -297,9 +313,6 @@ pub fn open_walk(root: &str) -> (Volume, bool) {
     let v = load(root, true).unwrap_or(Volume { root: root.to_string(), walk: true, idx: Index::new(), journal_id: 0, next_usn: 0, dirty: false });
     (v, fresh)
 }
-
-/// How soon to retry a walk that could not be trusted (share offline, drive unplugged).
-pub const RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Result of a directory walk, with enough bookkeeping to tell a real listing from one cut short by an
 /// unreachable share.
@@ -343,12 +356,14 @@ pub fn walk(root: &str) -> Walk {
                     Ok(rd) => {
                         for e in rd.flatten() {
                             let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+                            // the listing already carries the modified time, so this costs no extra round trip
+                            let time = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
                             let id = next_id.fetch_add(1, SeqCst);
                             if is_dir {
                                 pending.fetch_add(1, SeqCst);
                                 queue.lock().unwrap().push((id, e.path()));
                             }
-                            found.push((id, Entry::new(parent, e.file_name().to_string_lossy().into_owned(), is_dir)));
+                            found.push((id, Entry::new(parent, e.file_name().to_string_lossy().into_owned(), is_dir, time)));
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
@@ -366,21 +381,33 @@ pub fn walk(root: &str) -> Walk {
 
 // ---- search
 
-/// Subsequence match on a lowercased name; None if no match. Higher is better.
-pub fn score(query: &str, name: &str) -> Option<f32> {
-    let n: Vec<char> = name.chars().collect();
-    let (mut i, mut s, mut prev) = (0, 0f32, usize::MAX);
-    let mut first = None;
-    for c in query.to_lowercase().chars() {
-        let p = n[i..].iter().position(|&x| x == c)? + i;
-        first.get_or_insert(p);
-        s += 10.0;
-        if p == 0 || matches!(n[p - 1], ' ' | '.' | '_' | '-') { s += 15.0; }
-        if p == prev.wrapping_add(1) { s += 20.0; }
-        prev = p;
-        i = p + 1;
+/// Fuzzy match of one lowercased word against a lowercased name: its letters must appear in order. None if
+/// they do not. Higher is better: word starts and consecutive letters score extra, long names and late
+/// matches lose a little. Single pass, no allocation: this runs once per indexed name on every keystroke.
+pub fn score(word: &str, name: &str) -> Option<f32> {
+    let mut want = word.chars();
+    let mut cur = want.next();
+    if cur.is_none() {
+        return Some(0.0);
     }
-    Some(s - n.len() as f32 * 0.1 - first.unwrap_or(0) as f32 * 0.5)
+    let (mut s, mut first, mut last, mut prev) = (0f32, 0usize, -1isize, ' ');
+    for (p, c) in name.chars().enumerate() {
+        if Some(c) == cur {
+            if last < 0 {
+                first = p;
+            }
+            s += 10.0;
+            if p == 0 || matches!(prev, ' ' | '.' | '_' | '-') { s += 15.0; }
+            if p as isize == last + 1 { s += 20.0; }
+            last = p as isize;
+            cur = want.next();
+            if cur.is_none() {
+                return Some(s - name.chars().count() as f32 * 0.1 - first as f32 * 0.5);
+            }
+        }
+        prev = c;
+    }
+    None
 }
 
 pub fn full_path(idx: &Index, mut frn: u64, root: &str) -> String {
@@ -393,17 +420,124 @@ pub fn full_path(idx: &Index, mut frn: u64, root: &str) -> String {
     format!("{root}\\{}", parts.join("\\"))
 }
 
+fn ext_of(lower_name: &str) -> &str {
+    match lower_name.rfind('.') {
+        Some(i) if i > 0 && i + 1 < lower_name.len() => &lower_name[i + 1..],
+        _ => "",
+    }
+}
+
+/// Does some ancestor folder's name contain `word`? (the `docs\` part of a query). A plain substring, not the
+/// fuzzy match used for file names: a folder filter must be precise, or `docs\` would also pick up "Discografia".
+fn in_folder(idx: &Index, mut parent: u64, word: &str) -> bool {
+    while let Some(p) = idx.get(&parent) {
+        if p.lower.contains(word) {
+            return true;
+        }
+        parent = p.parent;
+    }
+    false
+}
+
+/// Score of an entry for a query, or None if it does not qualify. Cheap checks first.
+fn matches(q: &Query, idx: &Index, e: &Entry) -> Option<f32> {
+    match q.only {
+        Some(Only::Files) if e.is_dir => return None,
+        Some(Only::Folders) if !e.is_dir => return None,
+        _ => {}
+    }
+    if !q.ext.is_empty() || !q.not_ext.is_empty() {
+        let x = ext_of(&e.lower);
+        if (!q.ext.is_empty() && !q.ext.iter().any(|v| v == x)) || q.not_ext.iter().any(|v| v == x) {
+            return None;
+        }
+    }
+    if q.not.iter().any(|w| e.lower.contains(w.as_str())) || !q.phrases.iter().all(|p| e.lower.contains(p.as_str())) {
+        return None;
+    }
+    if let Some((from, to)) = q.date {
+        if e.time < from || e.time >= to {
+            return None;
+        }
+    }
+    let mut s = 0.0;
+    for t in &q.terms {
+        s += score(t, &e.lower)?;
+    }
+    if !q.dirs.iter().all(|d| in_folder(idx, e.parent, d)) {
+        return None;
+    }
+    // with no words to rank by (a pure filter), newest first
+    let base = if q.terms.is_empty() { e.time as f32 / 1e6 } else { s };
+    Some(base + if e.is_dir { 0.0 } else { 1.0 })
+}
+
 /// Best `limit` matches as (score, id), highest score first.
-pub fn search(idx: &Index, query: &str, limit: usize) -> Vec<(f32, u64)> {
-    let mut hits: Vec<(f32, u64)> = idx.iter().filter_map(|(&f, e)| score(query, &e.lower).map(|s| (s + if e.is_dir { 0.0 } else { 1.0 }, f))).collect();
-    hits.sort_by(|a, b| b.0.total_cmp(&a.0));
-    hits.truncate(limit);
+pub fn search(idx: &Index, q: &Query, limit: usize) -> Vec<(f32, u64)> {
+    if !q.searches_files() || q.is_empty() {
+        return vec![];
+    }
+    let mut hits: Vec<(f32, u64)> = idx.iter().filter_map(|(&f, e)| matches(q, idx, e).map(|s| (s, f))).collect();
+    let best_first = |a: &(f32, u64), b: &(f32, u64)| b.0.total_cmp(&a.0);
+    if hits.len() > limit {
+        // a one-letter query matches most of the disk: pick the best few without sorting everything
+        hits.select_nth_unstable_by(limit, best_first);
+        hits.truncate(limit);
+    }
+    hits.sort_by(best_first);
     hits
+}
+
+/// Char positions of `name` that the query matched, for highlighting. Empty if positions cannot be mapped.
+pub fn highlight(q: &Query, name: &str) -> Vec<usize> {
+    let lower: Vec<char> = name.to_lowercase().chars().collect();
+    if lower.len() != name.chars().count() {
+        return vec![]; // lowercasing changed the length: indexes would not line up
+    }
+    let mut marked = vec![false; lower.len()];
+    for w in &q.terms {
+        let mut i = 0;
+        for c in w.chars() {
+            match lower[i..].iter().position(|&x| x == c) {
+                Some(k) => {
+                    marked[i + k] = true;
+                    i += k + 1;
+                }
+                None => break,
+            }
+        }
+    }
+    for p in &q.phrases {
+        let p: Vec<char> = p.chars().collect();
+        if let Some(at) = lower.windows(p.len().max(1)).position(|w| w == &p[..]) {
+            marked[at..at + p.len()].iter_mut().for_each(|m| *m = true);
+        }
+    }
+    marked.iter().enumerate().filter(|(_, &m)| m).map(|(i, _)| i).collect()
+}
+
+/// A small fixed volume for tests in other modules.
+#[cfg(test)]
+pub fn sample_volume() -> Volume {
+    let mut idx = Index::new();
+    idx.insert(1, Entry::new(0, "Docs".into(), true, 1_700_000_000));
+    idx.insert(2, Entry::new(1, "report 2024.pdf".into(), false, 1_700_000_000));
+    idx.insert(3, Entry::new(1, "draft report.docx".into(), false, 1_600_000_000));
+    Volume { root: "C:".into(), walk: false, idx, journal_id: 7, next_usn: 0, dirty: false }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::Clock;
+
+    // 2023-11-14 22:13:20 UTC; local time zone = UTC
+    const NOW: i64 = 1_700_000_000;
+    const DAYS: i64 = 86_400;
+
+    fn q(s: &str) -> Query {
+        Query::parse(s, &Clock::new(NOW, 0))
+    }
 
     fn rec(frn: u64, parent: u64, attrs: u32, reason: u32, name: &str) -> Vec<u8> {
         let u: Vec<u8> = name.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
@@ -412,6 +546,7 @@ mod tests {
         b[0..4].copy_from_slice(&(len as u32).to_le_bytes());
         b[8..16].copy_from_slice(&frn.to_le_bytes());
         b[16..24].copy_from_slice(&parent.to_le_bytes());
+        b[32..40].copy_from_slice(&((NOW + 11_644_473_600) * 10_000_000).to_le_bytes()); // timestamp: NOW
         b[40..44].copy_from_slice(&reason.to_le_bytes());
         b[52..56].copy_from_slice(&attrs.to_le_bytes());
         b[56..58].copy_from_slice(&(u.len() as u16).to_le_bytes());
@@ -421,8 +556,28 @@ mod tests {
     }
 
     fn vol(buf: &[u8]) -> Volume {
-        let idx = parse_records(buf).into_iter().map(|r| (r.frn, Entry::new(r.parent, r.name, r.is_dir))).collect();
+        let idx = parse_records(buf).into_iter().map(|r| (r.frn, Entry::new(r.parent, r.name, r.is_dir, r.time))).collect();
         Volume { root: "C:".into(), walk: false, idx, journal_id: 7, next_usn: 100, dirty: false }
+    }
+
+    /// C:\Docs\{report 2024.pdf, draft report.docx, notes.txt}, C:\Pics\{photo.jpg, report.jpg}, with ages in days.
+    fn tree() -> Index {
+        let mut i = Index::new();
+        let mut add = |frn, parent, name: &str, is_dir, age: i64| i.insert(frn, Entry::new(parent, name.into(), is_dir, NOW - age * DAYS));
+        add(1, 0, "Docs", true, 0);
+        add(2, 0, "Pics", true, 0);
+        add(10, 1, "report 2024.pdf", false, 0); // today
+        add(11, 1, "draft report.docx", false, 3);
+        add(12, 1, "notes.txt", false, 40);
+        add(20, 2, "photo.jpg", false, 1);
+        add(21, 2, "report.jpg", false, 5);
+        i
+    }
+
+    fn found(idx: &Index, query: &str) -> Vec<u64> {
+        let mut ids: Vec<u64> = search(idx, &q(query), 50).into_iter().map(|h| h.1).collect();
+        ids.sort();
+        ids
     }
 
     #[test]
@@ -432,25 +587,87 @@ mod tests {
         buf.extend(rec(12, 10, 0, 0, "rm.txt"));
         let v = vol(&buf);
         assert_eq!(v.idx.len(), 3);
+        assert_eq!(v.idx[&12].time, NOW); // the USN record's timestamp became the last-change time
         assert_eq!(full_path(&v.idx, 12, "C:"), r"C:\Docs\rm.txt");
-        assert_eq!(search(&v.idx, "rl", 5)[0].1, 11);
-        assert_eq!(search(&v.idx, "rm", 5)[0].1, 12);
-        assert!(search(&v.idx, "zzz", 5).is_empty());
+        assert_eq!(search(&v.idx, &q("rl"), 5)[0].1, 11);
+        assert_eq!(search(&v.idx, &q("rm"), 5)[0].1, 12);
+        assert!(search(&v.idx, &q("zzz"), 5).is_empty());
         // the example used in the README
         let readme = vol(&rec(1, 5, 0, 0, "README.md"));
-        assert_eq!(search(&readme.idx, "rdme", 5)[0].1, 1);
+        assert_eq!(search(&readme.idx, &q("rdme"), 5)[0].1, 1);
+    }
+
+    #[test]
+    fn scoring_prefers_starts_and_runs() {
+        let s = |w, n| score(w, n).unwrap();
+        assert!(s("rep", "report.txt") > s("rep", "my deep report.txt")); // earlier and shorter
+        assert!(s("rep", "report.txt") > s("rpt", "report.txt")); // consecutive letters beat scattered ones
+        assert!(s("lst", "my list.txt") > s("lst", "mylist.txt")); // letter at a word start
+        assert_eq!(score("zz", "report"), None);
+        assert_eq!(score("tr", "rt"), None); // order matters
+    }
+
+    #[test]
+    fn words_match_in_any_order() {
+        let t = tree();
+        assert_eq!(found(&t, "2024 report"), [10]);
+        assert_eq!(found(&t, "report"), [10, 11, 21]);
+    }
+
+    #[test]
+    fn filters_combine() {
+        let t = tree();
+        assert_eq!(found(&t, "ext:pdf"), [10]);
+        assert_eq!(found(&t, "*.jpg"), [20, 21]);
+        assert_eq!(found(&t, "report -draft"), [10, 21]);
+        assert_eq!(found(&t, "report -ext:jpg"), [10, 11]);
+        assert_eq!(found(&t, r#""report 2024""#), [10]);
+        assert_eq!(found(&t, "folder:"), [1, 2]);
+        assert_eq!(found(&t, "file: pic:"), [20, 21]);
+        assert_eq!(found(&t, r"docs\ report"), [10, 11]); // only reports inside a "docs" folder
+        assert_eq!(found(&t, r"pics\ report"), [21]);
+        assert_eq!(found(&t, r"nowhere\ report"), Vec::<u64>::new());
+        assert_eq!(found(&t, r"dcs\ report"), Vec::<u64>::new()); // folder names are matched as text, not fuzzily
+        assert_eq!(found(&t, "ext:pdf;docx -draft"), [10]);
+    }
+
+    #[test]
+    fn dates_and_filter_only_order() {
+        let t = tree();
+        assert_eq!(found(&t, "date:today file:"), [10]);
+        assert_eq!(found(&t, "date:week file:"), [10, 11, 20, 21]);
+        assert_eq!(found(&t, "date:2023-11 file:"), [10, 11, 20, 21]);
+        assert_eq!(found(&t, "date:2023 file:"), [10, 11, 12, 20, 21]);
+        // no words to rank by: newest first
+        let order: Vec<u64> = search(&t, &q("date:week file:"), 10).into_iter().map(|h| h.1).collect();
+        assert_eq!(order, [10, 20, 11, 21]);
+    }
+
+    #[test]
+    fn apps_flag_returns_no_files() {
+        assert!(search(&tree(), &q("app: report"), 10).is_empty());
+        assert!(search(&tree(), &q(""), 10).is_empty());
+    }
+
+    #[test]
+    fn highlights_matched_letters() {
+        let hl = |query: &str, name: &str| highlight(&q(query), name);
+        assert_eq!(hl("rdme", "README.md"), [0, 3, 4, 5]); // r, d, m, e of "readme.md"
+        assert_eq!(hl("rep 24", "report 2024.pdf"), [0, 1, 2, 7, 10]); // "rep" + 2 and 4 of "2024"
+        assert_eq!(hl(r#""2024""#, "report 2024.pdf"), [7, 8, 9, 10]);
+        assert_eq!(hl("x", "report"), Vec::<usize>::new());
     }
 
     #[test]
     fn live_changes_and_cache_roundtrip() {
         let mut v = vol(&[rec(10, 5, 0x10, 0, "Docs"), rec(11, 10, 0, 0, "old.txt")].concat());
         apply(&mut v, vec![
-            Change::Upsert(11, 10, "new name.txt".into(), false), // rename
-            Change::Upsert(12, 10, "fresh.txt".into(), false),    // create
-            Change::Delete(10),                                    // delete
+            Change::Upsert(11, 10, "new name.txt".into(), false, NOW + 5), // rename
+            Change::Upsert(12, 10, "fresh.txt".into(), false, NOW + 9),    // create
+            Change::Delete(10),                                             // delete
         ], 200);
         assert_eq!((v.idx.len(), v.next_usn, v.dirty), (2, 200, true));
-        assert_eq!(search(&v.idx, "nn", 5)[0].1, 11);
+        assert_eq!(search(&v.idx, &q("nn"), 5)[0].1, 11);
         assert!(!v.idx.contains_key(&10));
 
         v.root = "Z:".into(); // never a real drive: keeps the test cache apart
@@ -458,7 +675,7 @@ mod tests {
         let back = load("Z:", false).unwrap();
         std::fs::remove_file(cache_path("Z:")).unwrap();
         assert_eq!((back.idx.len(), back.next_usn, back.journal_id), (2, 200, 7));
-        assert_eq!(back.idx[&12].name, "fresh.txt");
+        assert_eq!((back.idx[&12].name.as_str(), back.idx[&12].time), ("fresh.txt", NOW + 9));
     }
 
     #[test]
@@ -473,8 +690,9 @@ mod tests {
         assert!(w.reliable());
         let idx = w.idx;
         assert_eq!(idx.len(), 4); // a, b, deep file.txt, top.txt
-        let hit = search(&idx, "deepf", 5)[0].1;
+        let hit = search(&idx, &q("deepf"), 5)[0].1;
         assert_eq!(full_path(&idx, hit, r), format!("{r}\\a\\b\\deep file.txt"));
+        assert!(idx[&hit].time > NOW, "walked entries carry their modified time"); // written just now
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -490,5 +708,47 @@ mod tests {
         let few = Walk { idx: Index::new(), dirs: 1000, failed: 10 };
         let many = Walk { idx: Index::new(), dirs: 1000, failed: 200 };
         assert!(few.reliable() && !many.reliable());
+    }
+
+    /// An index of `n` plausible names spread over a folder tree.
+    fn synthetic(n: u64) -> Index {
+        let (words, exts) = (["report", "invoice", "holiday", "notes", "backup", "draft", "photo"], ["pdf", "docx", "jpg", "txt", "mp4"]);
+        let mut i = Index::with_capacity(n as usize + 100);
+        for d in 1..=100 {
+            i.insert(d, Entry::new(0, format!("folder {d}"), true, NOW));
+        }
+        for k in 0..n {
+            let name = format!("{}_{}_{}.{}", words[(k % 7) as usize], k, words[(k / 7 % 7) as usize], exts[(k % 5) as usize]);
+            i.insert(1000 + k, Entry::new(1 + k % 100, name, false, NOW - (k % 400) as i64 * DAYS));
+        }
+        i
+    }
+
+    /// Guards against an accidental slowdown (say, an allocation back in the hot loop). The limit is generous
+    /// on purpose: it catches order-of-magnitude regressions, not noise. Debug builds are far slower; skip them.
+    #[test]
+    fn search_latency_budget() {
+        if cfg!(debug_assertions) {
+            return;
+        }
+        let idx = synthetic(300_000);
+        for query in ["rep", "inv 2024", r"folder\ photo ext:jpg", "ext:pdf date:month", "a"] {
+            let t = std::time::Instant::now();
+            let hits = search(&idx, &q(query), 20);
+            let took = t.elapsed();
+            assert!(took < Duration::from_millis(1500), "{query:?} took {took:?} over 300k names ({} hits)", hits.len());
+        }
+    }
+
+    /// Manual benchmark on a few million names: cargo test --release bench_search -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench_search() {
+        let idx = synthetic(2_000_000);
+        for query in ["rep", "inv 2024", "rpt", r"folder\ photo ext:jpg", "ext:pdf date:month", "a", "zzzz"] {
+            let t = std::time::Instant::now();
+            let hits = search(&idx, &q(query), 20);
+            println!("{query:<26} {:>8.1?}  ({} hits)", t.elapsed(), hits.len());
+        }
     }
 }

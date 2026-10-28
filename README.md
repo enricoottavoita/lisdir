@@ -18,13 +18,38 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   refreshed every 10 minutes.
 - **Type to search.** With an Explorer folder or the desktop focused, typing letters opens the bar with those
   letters already entered (toggle it in the tray menu).
-- **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher.
+- **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher. Several words
+  match in any order, and the matched letters are highlighted.
+- **Search syntax.** Narrow with `ext:pdf`, `date:week`, `-draft`, `"exact phrase"`, `docs\ report`; see below.
+- **Recent items.** Open the bar and type nothing to see what you opened lately (`Del` removes one). Things you
+  open often rank a little higher, but how well the name matches always counts most.
 - **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`.
 - **File-type icons.** Results show the same icons as Explorer, so videos, photos, documents and archives stand out.
 - **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
 - **No admin UI.** The bar runs as a normal user; only a small background helper is elevated.
 - **English and Italian.** The language follows your Windows display language (set `LISDIR_LANG=it` or `en` to
   override). The installer is translated too.
+
+## Search syntax
+
+Plain words match file names; everything else narrows the results. All of it can be combined.
+
+| You type | It means |
+|---|---|
+| `report 2024` | names containing both words, in any order (fuzzy) |
+| `ext:pdf;docx` or `*.pdf` | only these extensions |
+| `-draft` / `-ext:tmp` | name must not contain `draft` / not this extension |
+| `"annual report"` | the exact phrase in the name |
+| `docs\ report` | "report" inside a folder whose name contains "docs" |
+| `folder:` / `file:` | only folders / only files |
+| `doc:` `pic:` `video:` `music:` `zip:` | a whole category of file types |
+| `date:today`, `yesterday`, `week`, `month`, `year` | changed today / yesterday / in the last 7, 30, 365 days |
+| `date:2026`, `date:2026-07`, `date:2026-07-31` | changed in that year / month / day |
+| `app:` | apps only |
+
+`date:` uses each file's last change (on NTFS, the time of its latest journal record; for network folders, the
+modified time). Words and filters together work too: `report ext:pdf date:month -draft`. With only filters and no
+words, the newest files come first.
 
 ## How it works
 
@@ -47,6 +72,8 @@ folders itself, because only your user session has your credentials and drive ma
 |---|---|
 | `src-tauri/src/engine.rs` | MFT enumeration, USN journal tailing, cache, directory walker, fuzzy matcher |
 | `src-tauri/src/service.rs` | Elevated helper, pipe server/client, scheduled-task install |
+| `src-tauri/src/query.rs` | The search syntax: parsing `ext:`, `date:`, quotes, `docs\`, ... |
+| `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost |
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
 | `src-tauri/src/icons.rs` | Shell file-type icons rendered to PNG |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
@@ -97,8 +124,10 @@ does all of this in CI and publishes a GitHub release.
 - The app list is read when lisdir starts, so a newly installed app appears after a restart.
 - Type-to-search does not check whether something is selected, and does not work over elevated windows.
 - Setting up the elevated helper needs administrator rights once; after that the bar needs none.
-- Not yet implemented: ranking by how often you open things, search filters, match highlighting, an action menu
-  and preview, a settings window with a configurable hotkey, Open/Save dialog integration, content search.
+- No `size:` filter yet (the index does not store file sizes). `date:` is the last change, not strictly the
+  modified time.
+- Not yet implemented: an action menu and preview, a settings window with a configurable hotkey, Open/Save
+  dialog integration, content search.
   The plan is in [TODO.md](TODO.md).
 
 ## Contributing

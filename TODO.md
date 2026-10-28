@@ -11,24 +11,25 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] English and Italian (0.11)
 - [x] App launcher: Start menu and Store apps ranked together with files (0.12)
 - [x] File-type icons in results (0.12)
+- [x] Search syntax: `ext:`, `-exclude`, `"phrase"`, `folder:`/`file:`, `date:`, category keywords, `app:` (0.13)
+- [x] Narrow by folder with a trailing `\` (0.13)
+- [x] Ranking: name match first, modest boost for what you open often (0.13)
+- [x] Recent items before you type (`Del` removes one); matched letters highlighted (0.13)
+- [x] Latency budget test and a manual benchmark for millions of names (0.13)
 
 ## 0.12.x — fixes first
 - [x] **Keep results when a network folder is unreachable** (a failed walk no longer replaces the index or cache)
 - [ ] Show network results while the first walk is still running (stream entries into the index)
 - [ ] Refresh the app list when the Start menu changes, not only at startup
 
-## 0.13 — search quality
-- [ ] **Search syntax** (works as typed text, no UI needed):
-      `ext:pdf;docx` or `*.pdf`, `date:today` / `date:week` / `date:2026-07`, `size:>1gb` / `size:10mb..1gb`,
-      `"exact phrase"`, `-draft` and `-ext:tmp` to exclude, `folder:` / `file:`; all combinable
-      (`ext:pdf date:week -draft contract`)
-- [ ] Narrow by folder with a trailing `\` (`docs\ report` = "report" inside a folder matching "docs")
-- [ ] Category keywords as shortcuts: `doc:`, `pic:`, `video:`, `music:`, `zip:`, `app:`
-- [ ] **Ranking:** how well the name matches comes first; opening habits only give a modest boost (a file you
-      opened once must not outrank a clearly better name match). Store usage counts locally
-- [ ] Show recent files and folders before you type anything, with a way to hide or exclude entries
-- [ ] Highlight the matched letters in each result
-- [ ] Latency budget: a benchmark test that searches a few million synthetic entries and fails if it regresses
+## 0.13.x — search follow-ups
+- [ ] `size:>1gb` / `size:10mb..1gb` filter. Needs file sizes in the index: read the MFT attributes on NTFS (the
+      USN records carry no size) and take sizes from the directory listing for network folders
+- [ ] Exact `date:` on NTFS from the MFT's modified time (today it is the last USN record, which also moves on
+      renames and permission changes)
+- [ ] Search several thousand results faster than a full scan per keystroke (keep names in a flat array and use
+      several cores), if the 2-million-name budget (about 0.3 s) starts to feel slow
+- [ ] Clear all recent items at once
 
 ## 0.14 — actions and preview
 - [ ] Action menu on a result (`Ctrl+O`, right arrow, right click) with shortcut hints in the footer

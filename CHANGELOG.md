@@ -10,6 +10,30 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-28
+
+### Added
+- Search syntax, combinable and typed as plain text: `ext:pdf;docx` / `*.pdf`, `-draft` and `-ext:tmp` to exclude,
+  `"exact phrase"`, `folder:` / `file:`, `date:` (`today`, `yesterday`, `week`, `month`, `year`, or `2026`,
+  `2026-07`, `2026-07-31`), category shortcuts `doc:` `pic:` `video:` `music:` `zip:`, and `app:` for apps only.
+  See the README for the table.
+- Narrow by folder with a trailing backslash: `docs\ report` finds "report" inside a folder whose name contains
+  "docs".
+- Recent items: open the bar and type nothing to see what you opened lately. `Del` removes the selected one.
+- Results you open often rank a little higher. The boost is small and capped, so how well the name matches always
+  counts most.
+- The letters matched by your search are highlighted in each result.
+- With filters and no words (for example `date:week file:`), the newest files come first.
+
+### Changed
+- Several words in a query now match in any order (each must match); before, the whole text was matched as one
+  sequence of letters.
+- The matcher is 3 to 4 times faster: about 0.3 s instead of 1 to 1.5 s for a query over 2 million names
+  (synthetic benchmark). A test now guards against regressions.
+- The bar always opens empty, which shows the recent items; it used to keep the last search selected.
+- The index remembers each file's last-change time. On the first start after updating, each disk is read again
+  once, because older index caches do not have it.
+
 ### Fixed
 - A network folder that is offline (powered-off NAS, dropped VPN, unplugged drive) no longer loses its search
   results: a walk that failed on more than 2% of the folders, or could not read the root, is discarded, the old
@@ -55,7 +79,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/enricoottavoita/lisdir/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/enricoottavoita/lisdir/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/enricoottavoita/lisdir/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/enricoottavoita/lisdir/releases/tag/v0.10.0
