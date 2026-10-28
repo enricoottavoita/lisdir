@@ -1,0 +1,46 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Tag must match the crate version
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"$v\"" src-tauri/Cargo.toml || { echo "Cargo.toml version is not $v"; exit 1; }
+
+      - name: Test and build
+        working-directory: src-tauri
+        run: |
+          cargo test --release
+          cargo build --release
+
+      - name: Build installer
+        run: |
+          iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          [ -f "$iscc" ] || choco install innosetup -y --no-progress
+          "$iscc" //DMyVersion="${GITHUB_REF_NAME#v}" installer/lisdir.iss
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          cp src-tauri/target/release/lisdir.exe "dist/lisdir-$v-portable.exe"
+          (cd dist && sha256sum *.exe > SHA256SUMS.txt)
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/SHA256SUMS.txt \
+            --title "lisdir $v" --notes-file .github/release-notes.md

@@ -57,22 +57,32 @@ cargo build --release
 
 The binary is `src-tauri/target/release/lisdir.exe`. There is no front-end build step.
 
-## Run
+## Install and run
 
-1. Start `lisdir.exe` normally (double-click).
-2. From the tray icon menu choose **Install index service (admin)…** and accept the UAC prompt, once. This
-   registers a scheduled task that starts the helper elevated at every logon and starts it right away.
-3. Press **Alt+Space**.
+**Installer (recommended).** Download `lisdir-setup-<version>.exe` from the
+[Releases](../../releases) page and run it. It asks for administrator rights once: to install into Program Files
+and to register the scheduled task that starts the elevated helper at logon. Then press **Alt+Space**.
+Uninstall from Windows Settings; this also removes the task. (The installer assumes you are the same account
+that is signing in; installing with a different admin account's credentials is not supported yet.)
+
+**Portable.** Run `lisdir-<version>-portable.exe`, then from the tray icon menu choose
+**Install index service (admin)…** and accept the UAC prompt, once.
+
+The executables are not code-signed yet, so SmartScreen may warn: *More info → Run anyway*.
 
 Tray menu options: type-to-search on/off, start with Windows, edit network folders, install the service.
 Extra network folders go in `%LOCALAPPDATA%\lisdir\roots.txt`, one path per line.
+
+To build the installer yourself: install [Inno Setup 6](https://jrsoftware.org/isinfo.php), build the release
+binary, then run `ISCC /DMyVersion=<version> installer\lisdir.iss` (output in `dist\`). Pushing a `v*` tag
+does all of this in CI and publishes a GitHub release.
 
 ## Limitations and roadmap
 
 - NTFS only for local disks (ReFS, exFAT and FAT volumes are not indexed).
 - Network folders are re-walked rather than watched, so changes appear after the next refresh.
 - The scheduled task points at the exe's current path; moving or rebuilding it while the helper runs
-  requires stopping the helper first. A proper installer is planned.
+  requires stopping the helper first (the installer handles this on upgrade).
 - Type-to-search does not check whether something is selected, and does not work over elevated windows.
 - Not yet implemented: match highlighting, file icons, configurable hotkey, Open/Save dialog integration,
   content search.

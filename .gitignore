@@ -2,3 +2,4 @@
 /src-tauri/gen/
 *.idx
 *.tmp
+/dist/
