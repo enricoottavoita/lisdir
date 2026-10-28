@@ -10,6 +10,8 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-28
+
 ### Added
 - Action menu on a result: press `→` (at the end of the text), `Ctrl+O`, or right-click. It offers open, show in
   folder, copy and cut (`Ctrl+C` / `Ctrl+X`: the file goes on the clipboard as Explorer puts it, so `Ctrl+V` in a
@@ -156,7 +158,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.14.3...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/enricoottavoita/lisdir/compare/v0.14.3...v0.15.0
 [0.14.3]: https://github.com/enricoottavoita/lisdir/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/enricoottavoita/lisdir/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/enricoottavoita/lisdir/compare/v0.14.0...v0.14.1
