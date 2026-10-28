@@ -305,7 +305,109 @@ fn write_cache(v: &Volume) -> io::Result<()> {
     }
     let tmp = p.with_extension("tmp");
     std::fs::write(&tmp, b)?;
-    std::fs::rename(tmp, p) // atomic: a crash never leaves a half-written cache
+    std::fs::rename(tmp, p)?; // atomic: a crash never leaves a half-written cache
+    if v.walk {
+        return Ok(()); // walked volumes are replaced as a whole, there is no journal to log
+    }
+    std::fs::write(log_path(&v.root), log_header(v.next_usn)) // changes from here on are appended to a new log
+}
+
+// ---- change log "LSL1": i64 next_usn of the snapshot it extends, then records. 1 = upsert (frn, parent, time,
+// ---- is_dir u8, name_len u16, name), 2 = delete (frn), 3 = meta (frn, time, size), 4 = commit (next_usn): the
+// ---- records before a commit are applied together. A torn tail (no commit) is dropped. The log is only a shortcut:
+// ---- the USN journal replay at startup restores anything it misses, so losing it costs time, never correctness.
+const LOG_LIMIT: u64 = 16 << 20;
+
+fn log_path(root: &str) -> PathBuf {
+    cache_path(root).with_extension("log")
+}
+
+fn log_header(snapshot_usn: i64) -> Vec<u8> {
+    [b"LSL1".as_slice(), &snapshot_usn.to_le_bytes()].concat()
+}
+
+/// Append a batch of changes to the log instead of rewriting the snapshot. False if it could not be written
+/// (the caller then falls back to a snapshot).
+pub fn append_log(root: &str, changes: &[Change], next_usn: i64) -> bool {
+    if changes.is_empty() {
+        return true; // nothing to remember; the journal position is re-read from the snapshot at startup
+    }
+    let mut b = vec![];
+    for c in changes {
+        match c {
+            Change::Upsert(frn, parent, name, is_dir, time) => {
+                b.push(1);
+                b.extend(frn.to_le_bytes());
+                b.extend(parent.to_le_bytes());
+                b.extend(time.to_le_bytes());
+                b.push(*is_dir as u8);
+                b.extend((name.len() as u16).to_le_bytes());
+                b.extend(name.as_bytes());
+            }
+            Change::Delete(frn) => {
+                b.push(2);
+                b.extend(frn.to_le_bytes());
+            }
+            Change::Meta(frn, time, size) => {
+                b.push(3);
+                b.extend(frn.to_le_bytes());
+                b.extend(time.to_le_bytes());
+                b.extend(size.to_le_bytes());
+            }
+        }
+    }
+    b.push(4);
+    b.extend(next_usn.to_le_bytes());
+    use std::io::Write;
+    // the log must already exist: the snapshot that started it is what its header refers to
+    std::fs::OpenOptions::new().append(true).open(log_path(root)).and_then(|mut f| f.write_all(&b)).is_ok()
+}
+
+/// Size of the change log in bytes: when it grows past a limit it is time for a new snapshot.
+pub fn log_is_big(root: &str) -> bool {
+    std::fs::metadata(log_path(root)).map_or(false, |m| m.len() > LOG_LIMIT)
+}
+
+/// Apply the committed batches of the log that extends this snapshot.
+fn replay_log(v: &mut Volume) {
+    let Ok(b) = std::fs::read(log_path(&v.root)) else { return };
+    if b.get(..4) != Some(b"LSL1") || b.get(4..12).map(|h| rd::<i64>(h, 0)) != Some(v.next_usn) {
+        return; // belongs to another snapshot
+    }
+    let (mut off, mut batch) = (12, vec![]);
+    while let Some(&kind) = b.get(off) {
+        off += 1;
+        let ok = (|| -> Option<()> {
+            match kind {
+                1 => {
+                    let (frn, parent, time) = (rd::<u64>(b.get(off..off + 8)?, 0), rd::<u64>(b.get(off + 8..off + 16)?, 0), rd::<i64>(b.get(off + 16..off + 24)?, 0));
+                    let (is_dir, nlen) = (*b.get(off + 24)? != 0, rd::<u16>(b.get(off + 25..off + 27)?, 0) as usize);
+                    let name = String::from_utf8(b.get(off + 27..off + 27 + nlen)?.to_vec()).ok()?;
+                    batch.push(Change::Upsert(frn, parent, name, is_dir, time));
+                    off += 27 + nlen;
+                }
+                2 => {
+                    batch.push(Change::Delete(rd::<u64>(b.get(off..off + 8)?, 0)));
+                    off += 8;
+                }
+                3 => {
+                    let f = b.get(off..off + 24)?;
+                    batch.push(Change::Meta(rd(f, 0), rd(f, 8), rd(f, 16)));
+                    off += 24;
+                }
+                4 => {
+                    let next = rd::<i64>(b.get(off..off + 8)?, 0);
+                    off += 8;
+                    apply(v, std::mem::take(&mut batch), next);
+                }
+                _ => return None,
+            }
+            Some(())
+        })();
+        if ok.is_none() {
+            break;
+        }
+    }
 }
 
 pub fn save(v: &mut Volume) -> io::Result<()> {
@@ -335,7 +437,11 @@ fn load(root: &str, walk: bool) -> Option<Volume> {
         idx.insert(rd(&b, off), Entry::new(rd(&b, off + 8), name, b[off + 32] != 0, rd(&b, off + 16)).with_size(rd(&b, off + 24)));
         off += 35 + nlen;
     }
-    Some(Volume { root: root.to_string(), walk, idx, journal_id, next_usn, dirty: false })
+    let mut v = Volume { root: root.to_string(), walk, idx, journal_id, next_usn, dirty: false };
+    if !walk {
+        replay_log(&mut v);
+    }
+    Some(v)
 }
 
 /// Cached index caught up through the journal, or a fresh full scan when the cache is
@@ -637,7 +743,7 @@ pub fn highlight(q: &Query, name: &str) -> Vec<usize> {
 pub fn sample_volume() -> Volume {
     let mut idx = Index::new();
     idx.insert(1, Entry::new(0, "Docs".into(), true, 1_700_000_000));
-    idx.insert(2, Entry::new(1, "report 2024.pdf".into(), false, 1_700_000_000));
+    idx.insert(2, Entry::new(1, "report 2024.pdf".into(), false, 1_700_000_000).with_size(2048));
     idx.insert(3, Entry::new(1, "draft report.docx".into(), false, 1_600_000_000));
     Volume { root: "C:".into(), walk: false, idx, journal_id: 7, next_usn: 0, dirty: false }
 }
@@ -810,6 +916,41 @@ mod tests {
             want.truncate(20);
             assert_eq!(got, want, "{qs}"); // same best scores whether or not the work was split across threads
         }
+    }
+
+    #[test]
+    fn change_log_extends_the_snapshot() {
+        let mut v = vol(&[rec(10, 5, 0x10, 0, "Docs"), rec(11, 10, 0, 0, "old.txt")].concat());
+        v.root = "Y:".into(); // never a real drive
+        v.next_usn = 100;
+        save(&mut v).unwrap();
+        let batch1 = vec![Change::Upsert(12, 10, "fresh.txt".into(), false, NOW + 9), Change::Meta(12, NOW + 20, 4096), Change::Delete(11)];
+        assert!(append_log("Y:", &batch1, 150));
+        let batch2 = vec![Change::Upsert(13, 10, "later.txt".into(), false, NOW + 30)];
+        assert!(append_log("Y:", &batch2, 180));
+        assert!(append_log("Y:", &[], 190)); // nothing to write
+
+        let back = load("Y:", false).unwrap();
+        assert_eq!(back.next_usn, 180);
+        assert!(!back.idx.contains_key(&11) && back.idx[&12].size == 4096 && back.idx.contains_key(&13));
+
+        // a half-written last batch is dropped, the committed ones stay
+        let log = log_path("Y:");
+        let mut raw = std::fs::read(&log).unwrap();
+        raw.extend([1, 99, 0, 0, 0, 0, 0, 0, 0, 1, 2]); // an upsert cut short
+        std::fs::write(&log, &raw).unwrap();
+        let torn = load("Y:", false).unwrap();
+        assert_eq!((torn.next_usn, torn.idx.len()), (180, back.idx.len()));
+
+        // a new snapshot starts a new log; a log from another snapshot is ignored
+        let mut b = load("Y:", false).unwrap();
+        save(&mut b).unwrap();
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 12);
+        std::fs::write(&log, [log_header(7), raw[12..].to_vec()].concat()).unwrap();
+        assert_eq!(load("Y:", false).unwrap().next_usn, 180); // unchanged: the foreign log was not applied
+        assert!(!log_is_big("Y:"));
+        let _ = std::fs::remove_file(cache_path("Y:"));
+        let _ = std::fs::remove_file(log);
     }
 
     #[test]

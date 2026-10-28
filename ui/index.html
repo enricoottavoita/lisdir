@@ -11,7 +11,8 @@
   #list { flex:1; min-height:0; overflow-y:auto; margin:0; padding:6px; list-style:none }
   li { display:flex; align-items:center; gap:10px; padding:6px 12px; border-radius:6px; white-space:nowrap }
   li .ic { width:24px; height:24px; flex:none }
-  li .tx { min-width:0; overflow:hidden; text-overflow:ellipsis }
+  li .tx { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis }
+  li .sz { flex:none; color:var(--dim); font-size:12px }
   li.sel { background:var(--sel) }
   li b { color:var(--hl); font-weight:600 }
   li small { display:block; color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis }
@@ -61,6 +62,14 @@ function iconUrl(h) {
   return p;
 }
 
+// 1536 -> "1.5 KB". Binary units, like Explorer.
+function fmtSize(n) {
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i && n < 10 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+}
+
 // The name with the letters the search matched in bold. Positions are code points, as in Rust.
 function nameNode(h) {
   const frag = document.createDocumentFragment(), on = new Set(h.hl || []);
@@ -89,6 +98,12 @@ function render() {
     s.textContent = h.app ? S.app : h.path;
     tx.append(s);
     li.append(img, tx);
+    if (h.size > 0 && !h.is_dir) {
+      const sz = document.createElement('span');
+      sz.className = 'sz';
+      sz.textContent = fmtSize(h.size);
+      li.append(sz);
+    }
     li.onclick = () => go(i, false);
     return li;
   }));

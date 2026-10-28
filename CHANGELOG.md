@@ -10,6 +10,14 @@ when releasing.
 
 ## [Unreleased]
 
+### Added
+- File sizes are shown at the right of each result (folders and files of unknown size show nothing).
+
+### Changed
+- The index cache is no longer rewritten every minute while files change. Changes are appended to a small log
+  next to the cache and replayed at startup; the full cache is rewritten only when the log passes 16 MB, every
+  six hours, or after a rescan. Less disk writing on a busy machine.
+
 ## [0.14.1] - 2026-10-28
 
 ### Changed

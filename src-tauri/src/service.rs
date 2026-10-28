@@ -2,7 +2,7 @@
 //! NTFS indexes (raw volume access needs admin) and answers searches over a named pipe; the UI runs as the
 //! normal user and is only a client. The pipe is ACL'd to the current user and SYSTEM.
 //!
-//! Wire format, one request per line: `S\t<query>\n`. Reply: `H\t<score>\t<is_dir>\t<name>\t<path>\n`*
+//! Wire format, one request per line: `S\t<query>\n`. Reply: `H\t<score>\t<is_dir>\t<name>\t<path>\t<size>\n`*
 //! then `E\t<busy 0|1>\t<item count>\n`. An empty query returns only the `E` line (a status probe).
 use crate::{engine, query::{Clock, Query}};
 use serde::Serialize;
@@ -47,17 +47,24 @@ pub struct Hit {
     pub app: bool,
     /// char positions of `name` to highlight (filled in by the UI process, not sent over the pipe)
     pub hl: Vec<usize>,
+    /// bytes; 0 for folders, apps and when unknown (the UI shows nothing then)
+    pub size: u64,
     #[serde(skip)]
     pub score: f32,
 }
 
 impl Hit {
     pub fn new(name: String, path: String, is_dir: bool, score: f32) -> Self {
-        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], name, path, is_dir, score }
+        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], size: 0, name, path, is_dir, score }
+    }
+
+    pub fn with_size(mut self, size: u64) -> Self {
+        self.size = size;
+        self
     }
 
     pub fn app(name: &str, id: &str, score: f32) -> Self {
-        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, score }
+        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, size: 0, score }
     }
 }
 
@@ -77,7 +84,7 @@ pub fn search_volumes(vols: &Volumes, q: &Query) -> Vec<Hit> {
     for vol in vols.read().unwrap().iter() {
         let v = vol.read().unwrap();
         hits.extend(engine::search(&v.idx, q, 20).into_iter().map(|(score, f)| {
-            Hit::new(v.idx[&f].name.clone(), engine::full_path(&v.idx, f, &v.root), v.idx[&f].is_dir, score)
+            Hit::new(v.idx[&f].name.clone(), engine::full_path(&v.idx, f, &v.root), v.idx[&f].is_dir, score).with_size(v.idx[&f].size)
         }));
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -91,26 +98,36 @@ pub fn count(vols: &Volumes) -> usize {
 
 // ---------------------------------------------------------------- helper (elevated)
 
-/// Keep a volume current by polling the USN journal; persist the cache when it changed.
-// ponytail: poll every second and hold the write lock while saving (~100 ms/min); use a blocking journal read + snapshot if that shows up.
+/// Keep a volume current by polling the USN journal. Changes are appended to a small log; the whole cache is
+/// rewritten only when the log gets big, a log write fails, or the journal had to be rescanned.
 fn tail(vol: Shared) {
-    let letter = vol.read().unwrap().root.chars().next().unwrap_or('C');
-    let mut last_save = Instant::now();
+    let (letter, root) = {
+        let v = vol.read().unwrap();
+        (v.root.chars().next().unwrap_or('C'), v.root.clone())
+    };
+    let (mut last_save, mut unlogged) = (Instant::now(), false);
     loop {
         std::thread::sleep(Duration::from_secs(1));
         let polled = engine::read_changes(&vol.read().unwrap());
         match polled {
-            Ok((c, n)) => engine::apply(&mut vol.write().unwrap(), c, n),
+            Ok((c, n)) => {
+                unlogged |= !engine::append_log(&root, &c, n);
+                engine::apply(&mut vol.write().unwrap(), c, n);
+            }
             // journal wrapped or was recreated: our position is gone, start over
             Err(_) => match engine::scan_volume(letter) {
-                Ok(fresh) => *vol.write().unwrap() = fresh,
+                Ok(fresh) => {
+                    *vol.write().unwrap() = fresh;
+                    unlogged = true;
+                }
                 Err(_) => return,
             },
         }
-        if last_save.elapsed().as_secs() >= 60 {
-            last_save = Instant::now();
-            if vol.read().unwrap().dirty {
-                let _ = engine::save_shared(&vol);
+        // a snapshot also every few hours, so a long-running log never has to be replayed in full
+        let stale = last_save.elapsed().as_secs() >= 6 * 3600;
+        if (unlogged || engine::log_is_big(&root) || stale) && vol.read().unwrap().dirty {
+            if engine::save_shared(&vol).is_ok() {
+                (last_save, unlogged) = (Instant::now(), false);
             }
         }
     }
@@ -169,7 +186,7 @@ fn answer(q: &str, vols: &Volumes, busy: &AtomicUsize) -> String {
     let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
     let mut out = String::new();
     for h in search_volumes(vols, &Query::parse(q, &Clock::system())) {
-        out += &format!("H\t{}\t{}\t{}\t{}\n", h.score, h.is_dir as u8, clean(&h.name), clean(&h.path));
+        out += &format!("H\t{}\t{}\t{}\t{}\t{}\n", h.score, h.is_dir as u8, clean(&h.name), clean(&h.path), h.size);
     }
     out + &format!("E\t{}\t{}\n", (busy.load(SeqCst) > 0) as u8, count(vols))
 }
@@ -236,6 +253,7 @@ mod tests {
         let f: Vec<&str> = r[0].split('\t').collect();
         assert_eq!((f[0], f[2], f[3], f[4]), ("H", "0", "report 2024.pdf", r"C:\Docs\report 2024.pdf"));
         assert!(f[1].parse::<f32>().is_ok());
+        assert_eq!(f[5], "2048"); // the size travels as the last field
         assert_eq!(r[1], "E\t0\t3"); // not busy, three indexed items
 
         assert_eq!(lines(r"docs\ report").len(), 3); // both reports are in a folder containing "docs"
@@ -253,11 +271,12 @@ pub fn query(q: &str) -> Option<Reply> {
     let mut hits = vec![];
     for line in BufReader::new(&f).lines() {
         let line = line.ok()?;
-        let mut p = line.splitn(5, '\t');
+        let mut p = line.splitn(6, '\t');
         match p.next()? {
             "H" => {
                 let (score, is_dir, name, path) = (p.next()?, p.next()?, p.next()?, p.next()?);
-                hits.push(Hit::new(name.into(), path.into(), is_dir == "1", score.parse().ok()?));
+                let size = p.next().and_then(|s| s.parse().ok()).unwrap_or(0); // absent from an older helper
+                hits.push(Hit::new(name.into(), path.into(), is_dir == "1", score.parse().ok()?).with_size(size));
             }
             "E" => return Some(Reply { hits, busy: p.next()? == "1", count: p.next()?.parse().ok()? }),
             _ => return None,
