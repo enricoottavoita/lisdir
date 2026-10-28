@@ -20,8 +20,8 @@ unelevated, and every feature ships with a test or a measured check.
 
 ## 0.12.x — fixes first
 - [x] **Keep results when a network folder is unreachable** (a failed walk no longer replaces the index or cache)
-- [ ] Show network results while the first walk is still running (stream entries into the index)
-- [ ] Refresh the app list when the Start menu changes, not only at startup
+- [x] Show network results while the first walk is still running (stream entries into the index)
+- [x] Refresh the app list when the Start menu changes, not only at startup
 
 ## 0.13.x — search follow-ups
 - [ ] `size:>1gb` / `size:10mb..1gb` filter. Needs file sizes in the index: read the MFT attributes on NTFS (the
@@ -30,7 +30,7 @@ unelevated, and every feature ships with a test or a measured check.
       renames and permission changes)
 - [ ] Search several thousand results faster than a full scan per keystroke (keep names in a flat array and use
       several cores), if the 2-million-name budget (about 0.3 s) starts to feel slow
-- [ ] Clear all recent items at once
+- [x] Clear all recent items at once
 
 ## 0.14 — actions and preview
 - [ ] Action menu on a result (`Ctrl+O`, right arrow, right click) with shortcut hints in the footer

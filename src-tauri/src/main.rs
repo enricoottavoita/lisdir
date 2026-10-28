@@ -31,6 +31,8 @@ struct App {
     network: Volumes,
     /// Start menu and Store apps, loaded in the background at startup
     apps: Arc<RwLock<Vec<apps::App>>>,
+    /// when the app list was last requested, so the Start menu is re-read at most once a minute
+    apps_at: std::sync::Mutex<Option<std::time::Instant>>,
     /// what you open: boosts frequent results and feeds the recent list
     usage: std::sync::Mutex<usage::Usage>,
     /// rendered icons by `icons::key`. ponytail: unbounded, but one entry per file type (plus one per program/shortcut shown).
@@ -45,17 +47,20 @@ struct App {
 
 /// Keep a network volume current by periodically re-walking it. It is searchable from the cache
 /// (or empty) right away; a first walk of a big share can take minutes.
-// ponytail: results of a walk appear only when it completes; stream into the index if first-run latency matters.
 fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
     let root = vol.read().unwrap().root.clone();
     let mut wait = engine::WALK_INTERVAL;
     loop {
         if stale {
             busy.fetch_add(1, Ordering::SeqCst);
-            let w = engine::walk(&root);
+            // with nothing indexed yet, show entries as they are found instead of after the whole walk
+            let streamed = vol.read().unwrap().idx.is_empty();
+            let w = engine::walk(&root, streamed.then_some(&*vol));
             if w.reliable() {
                 let mut v = vol.write().unwrap();
-                v.idx = w.idx;
+                if !streamed {
+                    v.idx = w.idx;
+                }
                 v.dirty = true;
                 let _ = engine::save(&mut v);
                 wait = engine::WALK_INTERVAL;
@@ -70,6 +75,23 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
     }
 }
 
+/// Re-read the Start menu in the background (a new install shows up the next time the bar opens). Throttled
+/// because it starts PowerShell.
+fn reload_apps(app: &App) {
+    let mut at = app.apps_at.lock().unwrap();
+    if at.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60)) {
+        return;
+    }
+    *at = Some(std::time::Instant::now());
+    let apps = app.apps.clone();
+    std::thread::spawn(move || {
+        let list = apps::load();
+        if !list.is_empty() {
+            *apps.write().unwrap() = list; // a failed read keeps the old list
+        }
+    });
+}
+
 /// Start the network walks and make sure the elevated helper is running.
 fn start(app: &App) {
     *app.usage.lock().unwrap() = usage::Usage::load(engine::data_dir().join("usage.txt"));
@@ -78,8 +100,7 @@ fn start(app: &App) {
             service::start_helper(); // no-op (fails quietly) until the service has been installed
         }
     });
-    let apps = app.apps.clone();
-    std::thread::spawn(move || *apps.write().unwrap() = apps::load());
+    reload_apps(app);
     for root in engine::network_roots() {
         let (v, fresh) = engine::open_walk(&root);
         let v: Shared = Arc::new(RwLock::new(v));
@@ -124,10 +145,14 @@ async fn search(q: String, app: State<'_, App>) -> Result<Vec<Hit>, String> {
     Ok(hits)
 }
 
-/// Take an item out of the recent list (and out of the habit boost).
+/// Take an item out of the recent list (and out of the habit boost); no path clears them all.
 #[tauri::command]
-fn forget(path: String, app: State<App>) {
-    app.usage.lock().unwrap().forget(&path);
+fn forget(path: Option<String>, app: State<App>) {
+    let mut usage = app.usage.lock().unwrap();
+    match path {
+        Some(p) => usage.forget(&p),
+        None => usage.clear(),
+    }
 }
 
 /// (indexing in progress, item count, helper reachable)
@@ -203,6 +228,7 @@ fn show(app: &AppHandle) {
         if !w.is_visible().unwrap_or(false) {
             let _ = w.center();
             app.state::<App>().focused.store(false, Ordering::SeqCst);
+            reload_apps(&app.state::<App>());
             let _ = w.show();
             let _ = w.set_focus();
             // Tell the page it was just opened (the DOM focus event is not reliable on the first show).

@@ -10,11 +10,20 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-10-28
+
 ### Added
 - Updates from the tray menu: lisdir checks the GitHub releases a few seconds after start and then daily, and the
   menu shows **Update to X.Y.Z…** when a newer one exists. Clicking it downloads the installer, verifies its
   SHA-256 against `SHA256SUMS.txt`, and starts it (Windows asks for permission); lisdir restarts afterwards.
   Nothing is installed without a click. The installer accepts `/START=1` for this silent run.
+- `Shift+Del` on the recent list clears all recent items at once.
+
+### Changed
+- Network folders with no cached index now show results while the first walk is still running, instead of only
+  after it finishes.
+- The app list is re-read from the Start menu when the bar opens (at most once a minute), so newly installed
+  apps appear without restarting lisdir.
 
 ## [0.13.1] - 2026-10-28
 
@@ -91,7 +100,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/enricoottavoita/lisdir/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/enricoottavoita/lisdir/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/enricoottavoita/lisdir/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/enricoottavoita/lisdir/compare/v0.11.0...v0.12.0

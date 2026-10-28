@@ -61,6 +61,14 @@ impl Usage {
         }
     }
 
+    /// Forget everything (the recent list and the habit boost).
+    pub fn clear(&mut self) {
+        if !self.items.is_empty() {
+            self.items.clear();
+            let _ = self.save();
+        }
+    }
+
     /// The most recently opened items, newest first.
     pub fn recent(&self, n: usize) -> Vec<(&str, &Item)> {
         let mut all: Vec<_> = self.items.iter().map(|(p, i)| (p.as_str(), i)).collect();
@@ -107,6 +115,8 @@ mod tests {
         assert_eq!(u.recent(5).iter().map(|r| r.0).collect::<Vec<_>>(), ["x", "y"]);
         u.forget("x");
         assert_eq!(u.recent(5).len(), 1);
+        u.clear();
+        assert!(u.recent(5).is_empty());
         for i in 0..(MAX_ITEMS as i64 + 20) {
             u.record(&format!("p{i}"), "n", false, false, 100 + i);
         }

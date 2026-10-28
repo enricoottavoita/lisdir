@@ -28,11 +28,11 @@ let hits = [], sel = 0, seq = 0, pollTimer;
 // Interface language comes from the Rust side (Windows UI language), so the tray menu and this bar always agree.
 const STR = {
   en: { ph: 'Search files, folders and apps…', app: 'Application', hint: '↑↓ select · Enter open · Ctrl+Enter show in folder · Esc close',
-        hintRecent: 'Recent · ↑↓ select · Enter open · Del remove from recent · Esc close',
+        hintRecent: 'Recent · ↑↓ select · Enter open · Del remove · Shift+Del clear all · Esc close',
         busy: 'Indexing…', items: n => n.toLocaleString() + ' items',
         down: 'Index service not running (tray menu → Install index service)' },
   it: { ph: 'Cerca file, cartelle e app…', app: 'Applicazione', hint: '↑↓ seleziona · Invio apri · Ctrl+Invio mostra nella cartella · Esc chiudi',
-        hintRecent: 'Recenti · ↑↓ seleziona · Invio apri · Canc rimuovi dai recenti · Esc chiudi',
+        hintRecent: 'Recenti · ↑↓ seleziona · Invio apri · Canc rimuovi · Maiusc+Canc svuota tutto · Esc chiudi',
         busy: 'Indicizzazione…', items: n => n.toLocaleString() + ' elementi',
         down: 'Servizio di indicizzazione non attivo (menu icona → Installa servizio di indicizzazione)' },
 };
@@ -122,9 +122,9 @@ q.onkeydown = e => {
   else if (e.key === 'ArrowUp') sel = Math.max(sel - 1, 0);
   else if (e.key === 'Enter') return go(sel, e.ctrlKey);
   else if (e.key === 'Escape') return invoke('hide');
-  else if (e.key === 'Delete' && !q.value.trim()) { // forget a recent item
+  else if (e.key === 'Delete' && !q.value.trim()) { // forget a recent item, or all of them with Shift
     const h = hits[sel];
-    if (h) invoke('forget', { path: h.path }).then(run);
+    if (h) invoke('forget', { path: e.shiftKey ? null : h.path }).then(run);
     return;
   }
   else return;

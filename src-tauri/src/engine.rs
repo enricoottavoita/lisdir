@@ -8,7 +8,7 @@ use std::{
     mem::size_of,
     path::PathBuf,
     ptr::null_mut,
-    sync::{atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst}, Mutex},
+    sync::{atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst}, Mutex, RwLock},
     time::{Duration, UNIX_EPOCH},
 };
 use windows_sys::Win32::{
@@ -333,7 +333,9 @@ impl Walk {
 
 /// Walk a directory tree with a pool of threads (SMB is latency-bound, not bandwidth-bound).
 /// Ids are synthetic; 0 is the root. Symlinks are listed but not followed.
-pub fn walk(root: &str) -> Walk {
+/// With `stream` (a volume that has no index yet) each folder's entries go straight into that volume, so results
+/// show up while the first walk is still running; the returned `idx` is then empty.
+pub fn walk(root: &str, stream: Option<&RwLock<Volume>>) -> Walk {
     let idx = Mutex::new(Index::new());
     let next_id = AtomicU64::new(1);
     let queue = Mutex::new(vec![(0u64, PathBuf::from(format!("{root}\\")))]);
@@ -371,7 +373,10 @@ pub fn walk(root: &str) -> Walk {
                         failed.fetch_add(1, SeqCst);
                     }
                 }
-                idx.lock().unwrap().extend(found);
+                match stream {
+                    Some(v) => v.write().unwrap().idx.extend(found),
+                    None => idx.lock().unwrap().extend(found),
+                }
                 pending.fetch_sub(1, SeqCst);
             });
         }
@@ -686,7 +691,7 @@ mod tests {
         std::fs::write(root.join("a").join("b").join("deep file.txt"), b"x").unwrap();
         std::fs::write(root.join("top.txt"), b"x").unwrap();
         let r = root.to_str().unwrap();
-        let w = walk(r);
+        let w = walk(r, None);
         assert!(w.reliable());
         let idx = w.idx;
         assert_eq!(idx.len(), 4); // a, b, deep file.txt, top.txt
@@ -697,13 +702,27 @@ mod tests {
     }
 
     #[test]
+    fn streamed_walk_fills_the_volume_directly() {
+        let root = std::env::temp_dir().join("lisdir_stream_test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::write(root.join("a").join("one.txt"), b"x").unwrap();
+        let r = root.to_str().unwrap();
+        let vol = RwLock::new(Volume { root: r.into(), walk: true, idx: Index::new(), journal_id: 0, next_usn: 0, dirty: false });
+        let w = walk(r, Some(&vol));
+        assert!(w.reliable() && w.idx.is_empty());
+        assert_eq!(vol.read().unwrap().idx.len(), 2); // a, one.txt
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn unreachable_walk_is_not_trusted() {
         // a share that is offline: the root itself cannot be read
-        let w = walk(r"\\lisdir-no-such-host-0\nothing");
+        let w = walk(r"\\lisdir-no-such-host-0\nothing", None);
         assert!(w.idx.is_empty());
         assert!(!w.reliable());
         // a missing local folder behaves the same way
-        assert!(!walk(r"C:\lisdir-no-such-folder-0").reliable());
+        assert!(!walk(r"C:\lisdir-no-such-folder-0", None).reliable());
         // the 2% rule: a few vanished folders are fine, a mass failure is not
         let few = Walk { idx: Index::new(), dirs: 1000, failed: 10 };
         let many = Walk { idx: Index::new(), dirs: 1000, failed: 200 };
