@@ -1,4 +1,4 @@
-//! Privilege split, like Listary's service: an elevated, windowless helper (`lisdir --helper`) owns the
+//! Privilege split: an elevated, windowless helper (`lisdir --helper`) owns the
 //! NTFS indexes (raw volume access needs admin) and answers searches over a named pipe; the UI runs as the
 //! normal user and is only a client. The pipe is ACL'd to the current user and SYSTEM.
 //!

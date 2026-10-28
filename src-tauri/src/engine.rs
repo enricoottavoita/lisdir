@@ -408,6 +408,9 @@ mod tests {
         assert_eq!(search(&v.idx, "rl", 5)[0].1, 11);
         assert_eq!(search(&v.idx, "rm", 5)[0].1, 12);
         assert!(search(&v.idx, "zzz", 5).is_empty());
+        // the example used in the README
+        let readme = vol(&rec(1, 5, 0, 0, "README.md"));
+        assert_eq!(search(&readme.idx, "rdme", 5)[0].1, 1);
     }
 
     #[test]

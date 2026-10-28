@@ -2,22 +2,23 @@
 
 [English](README.md) · **Italiano**
 
-Una barra di ricerca file veloce e open source per Windows. Premi **Alt+Spazio** (oppure inizia a scrivere
-in una cartella di Esplora risorse o sul Desktop) e trova qualsiasi file o cartella del computer mentre scrivi.
+Una barra di ricerca e lanciatore di app veloce e open source per Windows. Premi **Alt+Spazio** (oppure inizia a
+scrivere in una cartella di Esplora risorse o sul Desktop) e trova file, cartelle e app del computer mentre scrivi.
 
 Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 
 ## Funzioni
 
 - **Ricerca istantanea su milioni di file.** I dischi NTFS locali sono indicizzati leggendo direttamente la MFT,
-  senza scorrere le cartelle: l'indice di un disco grande è pronto in pochi secondi.
-- **Sempre aggiornato.** L'indice segue il journal USN di NTFS: file creati, rinominati, spostati o eliminati
-  compaiono entro circa un secondo. L'indice è salvato su disco, quindi gli avvii successivi sono quasi immediati.
+  senza scorrere le cartelle, molto più veloce di una scansione delle cartelle.
+- **Sempre aggiornato.** L'indice segue il journal USN di NTFS (controllato ogni secondo): file creati, rinominati,
+  spostati o eliminati compaiono entro un paio di secondi. L'indice è salvato su disco, quindi a ogni riavvio
+  recupera solo ciò che è cambiato.
 - **Cartelle di rete.** Unità mappate e percorsi UNC (condivisioni SMB) sono indicizzati con una scansione
   parallela e aggiornati ogni 10 minuti.
 - **Digita per cercare.** Con una cartella di Esplora risorse o il Desktop in primo piano, scrivere delle lettere
   apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona).
-- **Ricerca approssimata.** `lsrysvc` trova `Listary.Service.exe`; inizi di parola e lettere consecutive
+- **Ricerca approssimata.** `rdme` trova `README.md`; inizi di parola e lettere consecutive
   valgono di più.
 - **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.
 - **Icone dei file.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto, documenti e
@@ -53,7 +54,7 @@ dell'icona: **Cartelle di rete…**).
 
 ## Compilare
 
-Servono Windows 10/11, la toolchain [Rust](https://rustup.rs) (MSVC), gli strumenti di compilazione di Visual
+Servono Windows 10/11 (64 bit), la toolchain [Rust](https://rustup.rs) (MSVC), gli strumenti di compilazione di Visual
 Studio (carico di lavoro C++) e WebView2 (già presente su Windows 11).
 
 ```
@@ -66,7 +67,11 @@ cargo build --release
 
 - Solo NTFS per i dischi locali (ReFS, exFAT e FAT non sono indicizzati).
 - Le cartelle di rete vengono riscansionate, non osservate: le modifiche compaiono al prossimo aggiornamento.
+- Una cartella di rete non dà risultati finché la prima scansione non è finita (minuti per una condivisione molto
+  grande); dagli avvii successivi usa la cache.
+- L'elenco delle app viene letto all'avvio di lisdir: un'app appena installata compare dopo un riavvio.
 - "Digita per cercare" non controlla se c'è qualcosa di selezionato e non funziona sopra finestre elevate.
+- I diritti di amministratore servono una volta, per configurare l'helper elevato; poi la barra non li richiede.
 - Non ancora presenti: ordinamento in base a quanto usi i file, filtri di ricerca, evidenziazione delle lettere
   trovate, menu azioni e anteprima, finestra delle impostazioni con scorciatoia configurabile, integrazione con i
   dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).

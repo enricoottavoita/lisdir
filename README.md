@@ -2,22 +2,23 @@
 
 **English** · [Italiano](README.it.md)
 
-A fast, open-source file search bar for Windows. Press **Alt+Space** (or just start typing in an
-Explorer window or on the desktop) and find any file or folder on your machine as you type.
+A fast, open-source search bar and app launcher for Windows. Press **Alt+Space** (or just start typing in an
+Explorer window or on the desktop) and find files, folders and apps on your machine as you type.
 
 Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 
 ## Features
 
 - **Instant search over millions of files.** Local NTFS volumes are indexed by reading the MFT directly,
-  not by walking directories, so a full index of a large disk takes seconds.
-- **Always current.** The index follows the NTFS USN journal: files you create, rename, move or delete show up
-  within about a second. The index is cached on disk, so later starts are near-instant.
+  not by walking directories, which is far faster than scanning folders.
+- **Always current.** The index follows the NTFS USN journal (checked every second): files you create, rename,
+  move or delete show up within a couple of seconds. The index is cached on disk, so a restart only has to catch
+  up on what changed.
 - **Network folders.** Mapped drives and UNC paths (SMB shares) are indexed by a parallel directory walk and
   refreshed every 10 minutes.
 - **Type to search.** With an Explorer folder or the desktop focused, typing letters opens the bar with those
   letters already entered (toggle it in the tray menu).
-- **Fuzzy matching.** `lsrysvc` finds `Listary.Service.exe`; word starts and consecutive letters score higher.
+- **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher.
 - **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`.
 - **File-type icons.** Results show the same icons as Explorer, so videos, photos, documents and archives stand out.
 - **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
@@ -33,7 +34,7 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 │ lisdir.exe           │◀───────────▶│ lisdir.exe --helper        │
 │  Tauri window, tray, │  (ACL: you  │  MFT scan, USN journal,    │
 │  hotkey, key hook,   │   + SYSTEM) │  on-disk index cache       │
-│  SMB directory walk  │             └────────────────────────────┘
+│  SMB walk, app list  │             └────────────────────────────┘
 └──────────────────────┘
 ```
 
@@ -46,13 +47,15 @@ folders itself, because only your user session has your credentials and drive ma
 |---|---|
 | `src-tauri/src/engine.rs` | MFT enumeration, USN journal tailing, cache, directory walker, fuzzy matcher |
 | `src-tauri/src/service.rs` | Elevated helper, pipe server/client, scheduled-task install |
+| `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
+| `src-tauri/src/icons.rs` | Shell file-type icons rendered to PNG |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
 | `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
 | `ui/index.html` | The search bar (plain HTML/JS, no build step) |
 
 ## Build
 
-Requirements: Windows 10/11, the [Rust toolchain](https://rustup.rs) (MSVC), Visual Studio Build Tools
+Requirements: Windows 10/11 (64-bit), the [Rust toolchain](https://rustup.rs) (MSVC), Visual Studio Build Tools
 (C++ workload), and the WebView2 runtime (already present on Windows 11).
 
 ```
@@ -89,7 +92,11 @@ does all of this in CI and publishes a GitHub release.
 - Network folders are re-walked rather than watched, so changes appear after the next refresh.
 - The scheduled task points at the exe's current path; moving or rebuilding it while the helper runs
   requires stopping the helper first (the installer handles this on upgrade).
+- A network folder returns no results until its first walk finishes (minutes for a very large share); later
+  starts use the cache.
+- The app list is read when lisdir starts, so a newly installed app appears after a restart.
 - Type-to-search does not check whether something is selected, and does not work over elevated windows.
+- Setting up the elevated helper needs administrator rights once; after that the bar needs none.
 - Not yet implemented: ranking by how often you open things, search filters, match highlighting, an action menu
   and preview, a settings window with a configurable hotkey, Open/Save dialog integration, content search.
   The plan is in [TODO.md](TODO.md).

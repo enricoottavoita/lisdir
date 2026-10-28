@@ -2,7 +2,7 @@
 name = "lisdir"
 version = "0.12.0"
 edition = "2021"
-description = "Fast file search bar for Windows: NTFS MFT index, live USN updates, SMB folders"
+description = "Fast search bar and app launcher for Windows: NTFS MFT index, live USN updates, network folders"
 license = "MIT"
 
 [build-dependencies]
