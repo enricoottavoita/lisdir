@@ -98,7 +98,7 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/query.rs` | The search syntax: parsing `ext:`, `date:`, quotes, `docs\`, ... |
 | `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost; the same list format holds the pins |
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
-| `src-tauri/src/icons.rs` | Shell file-type icons and preview thumbnails rendered to PNG |
+| `src-tauri/src/icons.rs` | Shell file-type icons and preview thumbnails rendered to BMP |
 | `src-tauri/src/actions.rs` | The action menu: files on the clipboard as Explorer puts them, open with, terminal, properties; text for the preview |
 | `src-tauri/src/settings.rs` | The settings file: shortcut, language, theme, tray icon, update check, indexed disks and folders, rules |
 | `src-tauri/src/rules.rs` | The do-not-index and hide-from-results rules |

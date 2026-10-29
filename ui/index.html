@@ -72,7 +72,7 @@ function iconUrl(h) {
   let p = iconCache.get(h.icon);
   if (!p) {
     p = invoke('icon', { key: h.icon, path: h.path })
-      .then(png => URL.createObjectURL(new Blob([png], { type: 'image/png' })))
+      .then(img => URL.createObjectURL(new Blob([img], { type: 'image/bmp' })))
       .catch(() => { iconCache.delete(h.icon); return ''; }); // don't remember failures: retry on the next render
     iconCache.set(h.icon, p);
   }
@@ -161,7 +161,7 @@ function showPreview() {
       pv.replaceChildren(pre);
     } else if (b[0] === 105) { // 'i'
       const img = new Image();
-      img.src = URL.createObjectURL(new Blob([b.subarray(1)], { type: 'image/png' }));
+      img.src = URL.createObjectURL(new Blob([b.subarray(1)], { type: 'image/bmp' }));
       img.onload = () => URL.revokeObjectURL(img.src);
       pv.replaceChildren(img);
     } else pv.replaceChildren();

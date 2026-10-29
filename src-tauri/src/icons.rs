@@ -1,4 +1,4 @@
-//! File-type icons for the result list: the shell's own icon (what Explorer shows), rendered to PNG.
+//! File-type icons for the result list: the shell's own icon (what Explorer shows), rendered to BMP.
 //! Icons are looked up by *type* (extension) without touching the file, so it is instant even on a slow
 //! network share; only programs and shortcuts, whose icon belongs to the individual file, are read by path.
 use std::{
@@ -39,8 +39,8 @@ fn com() {
     COM.with(|_| {});
 }
 
-/// PNG bytes of the 32x32 shell icon for a key from `key()`.
-pub fn icon_png(key: &str, path: &str) -> Option<Vec<u8>> {
+/// BMP bytes of the 32x32 shell icon for a key from `key()`.
+pub fn icon_image(key: &str, path: &str) -> Option<Vec<u8>> {
     com();
     // One at a time: a result list asks for several icons at once, and the shell's icon lookup is not
     // reliable when hammered from many threads. Each type is rendered once and cached, so this is cheap.
@@ -63,15 +63,15 @@ pub fn icon_png(key: &str, path: &str) -> Option<Vec<u8>> {
         if SHGetFileInfoW(wide.as_ptr(), attrs, &mut fi, size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | extra) == 0 || fi.hIcon.is_null() {
             return None;
         }
-        let px = to_rgba(fi.hIcon);
+        let px = to_bgra(fi.hIcon);
         DestroyIcon(fi.hIcon);
-        px.map(|(w, h, rgba)| png(w, h, &rgba))
+        px.map(|(w, h, bgra)| to_bmp(w, h, &bgra))
     }
 }
 
 /// The shell's picture of a file, at most `px` wide or high: what Explorer shows in Large icons view (a thumbnail
 /// for photos, videos, PDFs, and the big icon for the rest).
-pub fn thumbnail_png(path: &str, px: i32) -> Option<Vec<u8>> {
+pub fn thumbnail_image(path: &str, px: i32) -> Option<Vec<u8>> {
     // IShellItemImageFactory, called through its vtable (windows-sys has no COM wrappers)
     #[repr(C)]
     struct Vtbl {
@@ -98,13 +98,10 @@ pub fn thumbnail_png(path: &str, px: i32) -> Option<Vec<u8>> {
         DeleteObject(bmp);
         let (w, h, mut p) = px?;
         let opaque = p.chunks_exact(4).all(|c| c[3] == 0); // photos come without alpha
-        for c in p.chunks_exact_mut(4) {
-            c.swap(0, 2);
-            if opaque {
-                c[3] = 255;
-            }
+        if opaque {
+            p.chunks_exact_mut(4).for_each(|c| c[3] = 255);
         }
-        Some(png(w, h, &p))
+        Some(to_bmp(w, h, &p))
     }
 }
 
@@ -121,13 +118,13 @@ unsafe fn app_icon(id: &str) -> Option<Vec<u8>> {
     if ok == 0 || fi.hIcon.is_null() {
         return None;
     }
-    let px = to_rgba(fi.hIcon);
+    let px = to_bgra(fi.hIcon);
     DestroyIcon(fi.hIcon);
-    px.map(|(w, h, rgba)| png(w, h, &rgba))
+    px.map(|(w, h, bgra)| to_bmp(w, h, &bgra))
 }
 
-/// Read an icon's pixels as RGBA. Old-style icons have no alpha channel; their transparency is in the mask.
-unsafe fn to_rgba(icon: HICON) -> Option<(usize, usize, Vec<u8>)> {
+/// Read an icon's pixels as BGRA. Old-style icons have no alpha channel; their transparency is in the mask.
+unsafe fn to_bgra(icon: HICON) -> Option<(usize, usize, Vec<u8>)> {
     let mut ii: ICONINFO = zeroed();
     if GetIconInfo(icon, &mut ii) == 0 {
         return None;
@@ -145,9 +142,6 @@ unsafe fn to_rgba(icon: HICON) -> Option<(usize, usize, Vec<u8>)> {
                         c[3] = if m[0] == 0 { 255 } else { 0 };
                     }
                 }
-            }
-            for c in p.chunks_exact_mut(4) {
-                c.swap(0, 2); // BGRA -> RGBA
             }
         }
         px
@@ -179,73 +173,35 @@ unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(usize, usize, Vec<u8>)> {
     (rows != 0 && w > 0).then_some((w, h, buf))
 }
 
-// ---- minimal PNG writer: uncompressed (stored) deflate blocks, good enough for a cached 32x32 icon.
+// ---- BMP writer. The webview decodes BMP itself, so there is no need for a PNG encoder (and its checksums). It
+// ---- has to be the V4 header with channel masks: with the plain 40-byte header the alpha channel is ignored.
 
-fn crc32(data: &[u8]) -> u32 {
-    let mut c = !0u32;
-    for &b in data {
-        c ^= b as u32;
-        for _ in 0..8 {
-            c = if c & 1 == 1 { (c >> 1) ^ 0xEDB8_8320 } else { c >> 1 };
-        }
+/// A top-down 32-bit BMP with alpha from BGRA pixels.
+fn to_bmp(w: usize, h: usize, bgra: &[u8]) -> Vec<u8> {
+    const HEADERS: usize = 14 + 108; // file header + BITMAPV4HEADER
+    let mut out = Vec::with_capacity(HEADERS + bgra.len());
+    out.extend(b"BM");
+    out.extend(((HEADERS + bgra.len()) as u32).to_le_bytes());
+    out.extend([0u8; 4]);
+    out.extend((HEADERS as u32).to_le_bytes());
+    out.extend(108u32.to_le_bytes()); // header size
+    out.extend((w as i32).to_le_bytes());
+    out.extend((-(h as i32)).to_le_bytes()); // negative: rows run top to bottom
+    out.extend([1, 0, 32, 0]); // planes, bits per pixel
+    out.extend(3u32.to_le_bytes()); // BI_BITFIELDS: the masks below say where each channel is
+    out.extend((bgra.len() as u32).to_le_bytes());
+    out.extend([0u8; 16]); // resolution, colour counts
+    for mask in [0x00FF_0000u32, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000] {
+        out.extend(mask.to_le_bytes()); // red, green, blue, alpha
     }
-    !c
-}
-
-fn adler32(data: &[u8]) -> u32 {
-    let (mut a, mut b) = (1u32, 0u32);
-    for &x in data {
-        a = (a + x as u32) % 65521;
-        b = (b + a) % 65521;
-    }
-    (b << 16) | a
-}
-
-fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
-    out.extend((data.len() as u32).to_be_bytes());
-    let start = out.len();
-    out.extend(kind);
-    out.extend(data);
-    let crc = crc32(&out[start..]);
-    out.extend(crc.to_be_bytes());
-}
-
-fn png(w: usize, h: usize, rgba: &[u8]) -> Vec<u8> {
-    let mut raw = Vec::with_capacity((w * 4 + 1) * h);
-    for row in rgba.chunks_exact(w * 4) {
-        raw.push(0); // filter: none
-        raw.extend(row);
-    }
-    let mut z = vec![0x78, 0x01]; // zlib header, no compression
-    let blocks = raw.chunks(65535).count();
-    for (i, b) in raw.chunks(65535).enumerate() {
-        z.push((i + 1 == blocks) as u8);
-        z.extend((b.len() as u16).to_le_bytes());
-        z.extend((!(b.len() as u16)).to_le_bytes());
-        z.extend(b);
-    }
-    z.extend(adler32(&raw).to_be_bytes());
-
-    let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    let mut ihdr = Vec::new();
-    ihdr.extend((w as u32).to_be_bytes());
-    ihdr.extend((h as u32).to_be_bytes());
-    ihdr.extend([8, 6, 0, 0, 0]); // 8-bit RGBA
-    chunk(&mut out, b"IHDR", &ihdr);
-    chunk(&mut out, b"IDAT", &z);
-    chunk(&mut out, b"IEND", &[]);
+    out.extend([0u8; 52]); // colour space, endpoints, gamma
+    out.extend(bgra);
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn checksums_match_known_vectors() {
-        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
-        assert_eq!(adler32(b"Wikipedia"), 0x11E6_0398);
-    }
 
     #[test]
     fn thumbnail_of_a_photo_and_a_folder() {
@@ -258,18 +214,23 @@ mod tests {
         bmp.extend([0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0, 0]);
         std::fs::write(&photo, bmp).unwrap();
         for p in [photo.to_str().unwrap(), r"C:\Windows"] {
-            let png = thumbnail_png(p, 256).unwrap_or_else(|| panic!("no thumbnail for {p}"));
-            assert_eq!(&png[1..4], b"PNG");
+            let img = thumbnail_image(p, 256).unwrap_or_else(|| panic!("no thumbnail for {p}"));
+            assert_eq!(&img[..2], b"BM");
         }
-        assert!(thumbnail_png(r"C:\no\such\file.jpg", 256).is_none());
+        assert!(thumbnail_image(r"C:\no\such\file.jpg", 256).is_none());
         let _ = std::fs::remove_file(photo);
     }
 
     #[test]
-    fn png_has_valid_structure() {
-        let p = png(1, 1, &[1, 2, 3, 4]);
-        assert_eq!(&p[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
-        assert_eq!(&p[p.len() - 12..], &[0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xAE, 0x42, 0x60, 0x82]);
+    fn bmp_has_a_v4_header_with_alpha_and_top_down_rows() {
+        let b = to_bmp(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        assert_eq!(&b[..2], b"BM");
+        assert_eq!(u32_at(2) as usize, b.len()); // file size
+        assert_eq!(u32_at(10), 122); // pixels start after the file header and the 108-byte header
+        assert_eq!((u32_at(14), u32_at(18) as i32, u32_at(22) as i32), (108, 2, -1)); // size, width, negative height
+        assert_eq!((u32_at(30), u32_at(54), u32_at(66)), (3, 0x00FF_0000, 0xFF00_0000)); // bitfields, red and alpha masks
+        assert_eq!(&b[122..], &[1, 2, 3, 4, 5, 6, 7, 8]); // pixels untouched
     }
 
     #[test]
@@ -289,9 +250,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         for (k, p) in [("dir", ""), (".txt", ""), (".mp4", ""), (".jpg", ""), (".pdf", ""), (".zip", ""), (".docx", ""), (".mp3", ""), ("file", ""), ("exe", r"C:\Windows\notepad.exe")] {
             let name = k.trim_start_matches('.').replace(['\\', ':'], "_");
-            let bytes = icon_png(if k == "exe" { p } else { k }, p).unwrap_or_default();
+            let bytes = icon_image(if k == "exe" { p } else { k }, p).unwrap_or_default();
             println!("{k}: {} bytes", bytes.len());
-            std::fs::write(dir.join(format!("{name}.png")), bytes).unwrap();
+            std::fs::write(dir.join(format!("{name}.bmp")), bytes).unwrap();
         }
     }
 }

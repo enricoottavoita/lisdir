@@ -187,12 +187,12 @@ fn pin(path: String, name: String, is_dir: bool, app: bool, state: State<App>) {
     }
 }
 
-/// Preview of a result: b't' + the start of a text file, or b'i' + a PNG (the shell's thumbnail or big icon).
+/// Preview of a result: b't' + the start of a text file, or b'i' + a BMP (the shell's thumbnail or big icon).
 #[tauri::command]
 async fn preview(path: String, is_dir: bool) -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(match (!is_dir).then(|| actions::text_start(&path)).flatten() {
         Some(text) => [b"t".as_slice(), text.as_bytes()].concat(),
-        None => [b"i".as_slice(), &icons::thumbnail_png(&path, 512).ok_or("no preview")?].concat(),
+        None => [b"i".as_slice(), &icons::thumbnail_image(&path, 512).ok_or("no preview")?].concat(),
     }))
 }
 
@@ -250,15 +250,15 @@ fn act(action: String, path: String, is_dir: bool, w: WebviewWindow) {
     }
 }
 
-/// PNG of the shell icon for a result (`key` is `Hit::icon`). Raw bytes, no base64.
+/// BMP of the shell icon for a result (`key` is `Hit::icon`). Raw bytes, no base64.
 #[tauri::command]
 async fn icon(key: String, path: String, app: State<'_, App>) -> Result<tauri::ipc::Response, String> {
-    if let Some(png) = app.icons.lock().unwrap().get(&key) {
-        return Ok(tauri::ipc::Response::new(png.clone()));
+    if let Some(img) = app.icons.lock().unwrap().get(&key) {
+        return Ok(tauri::ipc::Response::new(img.clone()));
     }
-    let png = icons::icon_png(&key, &path).ok_or("no icon")?;
-    app.icons.lock().unwrap().insert(key, png.clone());
-    Ok(tauri::ipc::Response::new(png))
+    let img = icons::icon_image(&key, &path).ok_or("no icon")?;
+    app.icons.lock().unwrap().insert(key, img.clone());
+    Ok(tauri::ipc::Response::new(img))
 }
 
 #[tauri::command]
