@@ -32,14 +32,12 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Dates in words: `date:3d`, `date:monday`, `date:lastweek`, and the Italian forms (`date:ieri`, `date:lunedì`)
 - [x] Settings window: configurable hotkey (plain character keys such as `Space` alone are refused), language
       override, theme presets, hide the tray icon, option to turn off the daily update check
-- [ ] Double-tap `Ctrl` as a shortcut (needs the low-level keyboard hook)
 - [ ] Settings window: also Start with Windows and Type to search (today only in the tray menu)
 - [ ] Choose which folders are indexed
 - [ ] **Exclude from results** (still indexed, hidden from results) and **do not index** rules
       (`node_modules`, `.git`, caches)
 - [ ] Index non-NTFS local disks (USB sticks, exFAT/FAT) with the directory walker; keep their results while the
       drive is unplugged
-- [ ] Cloud-synced folders (OneDrive, Google Drive, Dropbox) as ordinary indexed folders
 
 ## 0.17 — search window
 - [ ] Persistent search window that stays open to compare files
@@ -57,6 +55,8 @@ unelevated, and every feature ships with a test or a measured check.
 - [ ] Measure the memory used by the UI and the helper with 1.6 million entries and state it in the README
 
 ## Later
+- [ ] Double-tap `Ctrl` as a shortcut (needs the low-level keyboard hook)
+- [ ] Cloud-synced folders (OneDrive, Google Drive, Dropbox) as ordinary indexed folders
 - [ ] Quick Save & Open: in Open/Save dialogs, jump to a recent folder, a searched folder, the folder you click in
       Explorer, or the last folder opened in a file manager; adapters for non-standard dialogs. Aim for
       near-instant popup
