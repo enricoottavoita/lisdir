@@ -21,6 +21,10 @@
   li .sz { flex:none; color:var(--dim); font-size:12px }
   li.sel { background:var(--sel) }
   li b { color:var(--hl); font-weight:600 }
+  #rh { flex:none; padding:8px 18px 0; color:var(--dim); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em }
+  #rh[hidden] { display:none }
+  #list.hist .ic { filter:grayscale(1); opacity:.65 }
+  #list.hist .tx { color:var(--dim) }
   li small { display:block; color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis }
   #menu { position:fixed; right:18px; min-width:240px; margin:0; padding:4px; list-style:none; background:var(--bg);
           border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px #0005 }
@@ -29,6 +33,7 @@
   #bar { flex:none; padding:8px 18px; color:var(--dim); font-size:12px; border-top:1px solid var(--line); background:var(--bg) }
 </style>
 <input id="q" placeholder="Search files and folders…" autofocus autocomplete="off" spellcheck="false">
+<div id="rh" hidden></div>
 <div id="main"><ul id="list"></ul><div id="pv" hidden></div></div>
 <ul id="menu" hidden></ul>
 <div id="bar"><span id="ver" style="float:right; margin-left:12px"></span><span id="st"></span> · <span id="hint"></span></div>
@@ -39,13 +44,13 @@ let hits = [], sel = 0, seq = 0, pollTimer;
 
 // Interface language comes from the Rust side (Windows UI language), so the tray menu and this bar always agree.
 const STR = {
-  en: { ph: 'Search files, folders and apps…', app: 'Application', hint: '↑↓ select · Enter open · → or Ctrl+O actions · Alt+P preview · Esc close',
+  en: { ph: 'Search files, folders and apps…', app: 'Application', recent: 'Recently opened', hint: '↑↓ select · Enter open · → or Ctrl+O actions · Alt+P preview · Esc close',
         hintRecent: 'Recent · ↑↓ select · Enter open · Del remove · Shift+Del clear all · Esc close',
         busy: 'Indexing…', items: n => n.toLocaleString() + ' items',
         down: 'Index service not running (tray menu → Install index service)',
         acts: { open: 'Open', folder: 'Show in folder', copy: 'Copy', cut: 'Cut', path: 'Copy path', openas: 'Open with…',
                 terminal: 'Open terminal here', properties: 'Properties', pin: 'Pin to top', unpin: 'Unpin' }, key: k => k },
-  it: { ph: 'Cerca file, cartelle e app…', app: 'Applicazione', hint: '↑↓ seleziona · Invio apri · → o Ctrl+O azioni · Alt+P anteprima · Esc chiudi',
+  it: { ph: 'Cerca file, cartelle e app…', app: 'Applicazione', recent: 'Aperti di recente', hint: '↑↓ seleziona · Invio apri · → o Ctrl+O azioni · Alt+P anteprima · Esc chiudi',
         hintRecent: 'Recenti · ↑↓ seleziona · Invio apri · Canc rimuovi · Maiusc+Canc svuota tutto · Esc chiudi',
         busy: 'Indicizzazione…', items: n => n.toLocaleString() + ' elementi',
         down: 'Servizio di indicizzazione non attivo (menu icona → Installa servizio di indicizzazione)',
@@ -61,7 +66,12 @@ function applyLang() {
 }
 // With nothing typed the list shows your recent items; say so, and how to remove one.
 function showHint() {
-  document.getElementById('hint').textContent = !q.value.trim() && hits.length ? S.hintRecent : S.hint;
+  const history = !q.value.trim() && hits.length > 0; // grey and titled, so it reads as history, not as search results
+  document.getElementById('hint').textContent = history ? S.hintRecent : S.hint;
+  const rh = document.getElementById('rh');
+  rh.hidden = !history;
+  rh.textContent = S.recent;
+  list.classList.toggle('hist', history);
 }
 applyLang();
 invoke('lang').then(l => { S = STR[l] || STR.en; applyLang(); poll(); });
@@ -230,7 +240,7 @@ async function poll() {
 
 invoke('version').then(v => document.getElementById('ver').textContent = 'v' + v);
 invoke('get_settings').then(c => document.documentElement.dataset.theme = c.theme);
-q.oninput = () => { menu = -1; run(); };
+q.oninput = () => { menu = -1; showHint(); run(); };
 q.onkeydown = e => {
   const k = e.key, n = menuActs().length;
   if (menu >= 0 && (k === 'ArrowDown' || k === 'ArrowUp')) menu = (menu + (k === 'ArrowDown' ? 1 : n - 1)) % n;

@@ -10,6 +10,12 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-10-29
+
+### Changed
+- With nothing typed, the list of recently opened items now has a **Recently opened** heading and is drawn in grey
+  (grey icons and names), so it reads as history and not as search results. It turns to colour as soon as you type.
+
 ## [0.16.3] - 2026-10-29
 
 ### Changed
