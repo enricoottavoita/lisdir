@@ -10,6 +10,12 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-10-29
+
+### Changed
+- Icons and preview thumbnails are now sent to the window as BMP instead of PNG: the window decodes them itself, so
+  the program no longer carries its own PNG encoder. They look the same. A few internal duplicates were removed.
+
 ## [0.16.2] - 2026-10-29
 
 ### Added
@@ -201,7 +207,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.16.2...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.16.3...HEAD
+[0.16.3]: https://github.com/enricoottavoita/lisdir/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/enricoottavoita/lisdir/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/enricoottavoita/lisdir/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/enricoottavoita/lisdir/compare/v0.15.1...v0.16.0
