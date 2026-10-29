@@ -384,6 +384,16 @@ fn open_settings(app: &AppHandle) {
     }
 }
 
+/// The folder chooser of Windows, for the lists in the settings window. None if the user cancels.
+#[tauri::command]
+async fn pick_folder(w: WebviewWindow) -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title(t("Choose a folder", "Scegli una cartella"))
+        .set_parent(&w)
+        .pick_folder()
+        .map(|p| p.to_string_lossy().trim_end_matches('\\').to_string())
+}
+
 #[tauri::command]
 fn close_window(w: WebviewWindow) {
     let _ = w.close();
@@ -604,7 +614,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, forget, get_settings, save_settings, settings_window, close_window, get_autostart, set_autostart_cmd, list_drives, restart_app])
+        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, forget, get_settings, save_settings, settings_window, close_window, pick_folder, get_autostart, set_autostart_cmd, list_drives, restart_app])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

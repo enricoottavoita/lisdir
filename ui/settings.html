@@ -32,6 +32,7 @@
   #msg.err { color:#e5484d }
   .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px }
   .recording input { border-color:var(--hl) }
+  .pickrow { margin-top:6px; text-align:right }
   [hidden] { display:none !important }
 </style>
 <main>
@@ -75,14 +76,17 @@
   <div class="block">
     <label for="folders"><span id="l-folders"></span><small id="s-folders"></small></label>
     <textarea id="folders" spellcheck="false" placeholder="\\nas\share&#10;D:\Projects"></textarea>
+    <div class="pickrow"><button type="button" data-pick="folders"></button></div>
   </div>
   <div class="block">
     <label for="no_index"><span id="l-noindex"></span><small id="s-noindex"></small></label>
     <textarea id="no_index" spellcheck="false" placeholder="node_modules&#10;*.tmp"></textarea>
+    <div class="pickrow"><button type="button" data-pick="no_index"></button></div>
   </div>
   <div class="block">
     <label for="exclude"><span id="l-exclude"></span><small id="s-exclude"></small></label>
     <textarea id="exclude" spellcheck="false" placeholder="C:\Windows&#10;*.log"></textarea>
+    <div class="pickrow"><button type="button" data-pick="exclude"></button></div>
     <span class="note" id="s-rules"></span>
   </div>
 
@@ -114,6 +118,7 @@ const STR = {
         noindex: 'Do not index', noindexHint: 'Left out of the index altogether (saves memory)',
         exclude: 'Hide from results', excludeHint: 'Indexed, but never shown',
         rules: 'One rule per line: a name or pattern (node_modules, *.tmp), or a folder path (C:\\Users\\me\\Cache). Case does not matter.',
+        pick: 'Add folder…',
         save: 'Save', close: 'Close', saved: 'Saved', restart: 'Restart now',
         restartNote: 'Saved. Restart lisdir to apply the changes to what is indexed.' },
   it: { title: 'Impostazioni', general: 'Generali', index: 'Cosa viene indicizzato',
@@ -132,6 +137,7 @@ const STR = {
         noindex: 'Non indicizzare', noindexHint: "Lasciato fuori dall'indice (risparmia memoria)",
         exclude: 'Nascondi dai risultati', excludeHint: 'Indicizzato, ma mai mostrato',
         rules: 'Una regola per riga: un nome o un modello (node_modules, *.tmp), oppure il percorso di una cartella (C:\\Users\\me\\Cache). Maiuscole e minuscole non contano.',
+        pick: 'Aggiungi cartella…',
         save: 'Salva', close: 'Chiudi', saved: 'Salvato', restart: 'Riavvia ora',
         restartNote: "Salvato. Riavvia lisdir per applicare le modifiche a ciò che viene indicizzato." },
 };
@@ -194,6 +200,7 @@ function labels() {
   set('l-folders', S.folders); set('s-folders', S.foldersHint);
   set('l-noindex', S.noindex); set('s-noindex', S.noindexHint);
   set('l-exclude', S.exclude); set('s-exclude', S.excludeHint); set('s-rules', S.rules);
+  document.querySelectorAll('[data-pick]').forEach(b => { b.textContent = S.pick; });
   set('rec', S.record); set('save', S.save); set('close', S.close); set('restart', S.restart);
   fill($('language'), S.languages);
   fill($('theme'), S.themes);
@@ -260,6 +267,15 @@ $('save').onclick = async () => {
     say(String(err), true);
   }
 };
+// "Add folder…": the Windows folder chooser, and the path goes on a new line of that list
+document.querySelectorAll('[data-pick]').forEach(b => {
+  b.onclick = async () => {
+    const path = await invoke('pick_folder');
+    if (!path) return;
+    const box = $(b.dataset.pick), have = lines(box.value);
+    if (!have.some(l => l.toLowerCase() === path.toLowerCase())) box.value = have.concat(path).join('\n');
+  };
+});
 $('restart').onclick = () => invoke('restart_app');
 $('close').onclick = () => invoke('close_window');
 
