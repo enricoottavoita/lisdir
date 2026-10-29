@@ -10,6 +10,13 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-29
+
+### Fixed
+- Settings window: the titles of the indexing section ran into their hints ("DisksUntick a disk…"); wording made
+  clearer in both languages ("tray icon" is now the notification area, "walked" is "read folder by folder"), and
+  the empty boxes show example rules and folders.
+
 ## [0.16.0] - 2026-10-29
 
 ### Added
@@ -187,7 +194,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/enricoottavoita/lisdir/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/enricoottavoita/lisdir/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/enricoottavoita/lisdir/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/enricoottavoita/lisdir/compare/v0.14.3...v0.15.0

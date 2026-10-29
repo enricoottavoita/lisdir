@@ -74,15 +74,15 @@
   </div>
   <div class="block">
     <label for="folders"><span id="l-folders"></span><small id="s-folders"></small></label>
-    <textarea id="folders" spellcheck="false"></textarea>
+    <textarea id="folders" spellcheck="false" placeholder="\\nas\share&#10;D:\Projects"></textarea>
   </div>
   <div class="block">
     <label for="no_index"><span id="l-noindex"></span><small id="s-noindex"></small></label>
-    <textarea id="no_index" spellcheck="false"></textarea>
+    <textarea id="no_index" spellcheck="false" placeholder="node_modules&#10;*.tmp"></textarea>
   </div>
   <div class="block">
     <label for="exclude"><span id="l-exclude"></span><small id="s-exclude"></small></label>
-    <textarea id="exclude" spellcheck="false"></textarea>
+    <textarea id="exclude" spellcheck="false" placeholder="C:\Windows&#10;*.log"></textarea>
     <span class="note" id="s-rules"></span>
   </div>
 
@@ -99,39 +99,39 @@ const $ = id => document.getElementById(id);
 
 const STR = {
   en: { title: 'Settings', general: 'General', index: 'What is indexed',
-        hotkey: 'Shortcut to open the bar', hotkeyHint: 'Needs Ctrl, Alt or Win, e.g. Alt+Space',
+        hotkey: 'Shortcut to open the search bar', hotkeyHint: 'Needs Ctrl, Alt or Win, for example Alt+Space',
         record: 'Record', recording: 'Press keys…', language: 'Language', theme: 'Theme',
         languages: { auto: 'Same as Windows', en: 'English', it: 'Italiano' },
         themes: { auto: 'Same as Windows', dark: 'Dark', light: 'Light', midnight: 'Midnight', paper: 'Paper' },
         autostart: 'Start with Windows',
-        typesearch: 'Type to search in Explorer and on the desktop', typesearchHint: 'Typing letters opens the bar with them',
+        typesearch: 'Type to search in Explorer and on the desktop', typesearchHint: 'Typing a letter opens the search bar with it already entered',
         updates: 'Check for updates', updatesHint: 'At startup and once a day; nothing installs without your click',
-        tray: 'Hide the tray icon', trayHint: 'Open the bar with the shortcut, settings with Ctrl+, in the bar',
+        tray: 'Hide the tray icon', trayHint: 'You can still open the bar with the shortcut, and the settings with Ctrl and comma in the bar',
         disks: 'Disks', disksHint: 'Untick a disk to leave it out of the search',
-        kinds: { ntfs: 'NTFS, read from the MFT', walk: 'walked (not NTFS)', network: 'network, walked' },
+        kinds: { ntfs: 'NTFS, read from the MFT', walk: 'read folder by folder (not NTFS)', network: 'network, read folder by folder' },
         absent: 'not connected, results kept',
-        folders: 'More folders', foldersHint: 'One path per line, e.g. \\\\nas\\share or D:\\Projects. Walked every 10 minutes',
+        folders: 'More folders', foldersHint: 'One path per line, for example \\\\nas\\share or D:\\Projects. Read again every 10 minutes',
         noindex: 'Do not index', noindexHint: 'Left out of the index altogether (saves memory)',
         exclude: 'Hide from results', excludeHint: 'Indexed, but never shown',
         rules: 'One rule per line: a name or pattern (node_modules, *.tmp), or a folder path (C:\\Users\\me\\Cache). Case does not matter.',
         save: 'Save', close: 'Close', saved: 'Saved', restart: 'Restart now',
         restartNote: 'Saved. Restart lisdir to apply the changes to what is indexed.' },
   it: { title: 'Impostazioni', general: 'Generali', index: 'Cosa viene indicizzato',
-        hotkey: 'Scorciatoia per aprire la barra', hotkeyHint: 'Serve Ctrl, Alt o Win, ad esempio Alt+Spazio',
+        hotkey: 'Scorciatoia per aprire la barra di ricerca', hotkeyHint: 'Serve Ctrl, Alt o Win, ad esempio Alt+Spazio',
         record: 'Registra', recording: 'Premi i tasti…', language: 'Lingua', theme: 'Tema',
         languages: { auto: 'Come Windows', en: 'English', it: 'Italiano' },
         themes: { auto: 'Come Windows', dark: 'Scuro', light: 'Chiaro', midnight: 'Notte', paper: 'Carta' },
         autostart: 'Avvia con Windows',
-        typesearch: 'Digita per cercare in Esplora risorse e sul desktop', typesearchHint: 'Le lettere digitate aprono la barra',
+        typesearch: 'Digita per cercare in Esplora risorse e sul desktop', typesearchHint: 'Digitando una lettera si apre la barra di ricerca con quella lettera già scritta',
         updates: 'Controlla gli aggiornamenti', updatesHint: "All'avvio e una volta al giorno; non installa nulla senza un tuo clic",
-        tray: "Nascondi l'icona nella barra", trayHint: 'Apri la barra con la scorciatoia, le impostazioni con Ctrl+, nella barra',
+        tray: "Nascondi l'icona nell'area di notifica", trayHint: 'Potrai aprire la barra con la scorciatoia, e le impostazioni con Ctrl e virgola nella barra',
         disks: 'Dischi', disksHint: 'Togli la spunta a un disco per escluderlo dalla ricerca',
         kinds: { ntfs: 'NTFS, letto dalla MFT', walk: 'scansione cartelle (non NTFS)', network: 'rete, scansione cartelle' },
         absent: 'non collegato, risultati mantenuti',
-        folders: 'Altre cartelle', foldersHint: 'Un percorso per riga, ad esempio \\\\nas\\condivisione o D:\\Progetti. Riscansionate ogni 10 minuti',
+        folders: 'Altre cartelle', foldersHint: 'Un percorso per riga, ad esempio \\\\nas\\condivisione o D:\\Progetti. Riletta ogni 10 minuti',
         noindex: 'Non indicizzare', noindexHint: "Lasciato fuori dall'indice (risparmia memoria)",
         exclude: 'Nascondi dai risultati', excludeHint: 'Indicizzato, ma mai mostrato',
-        rules: 'Una regola per riga: un nome o un modello (node_modules, *.tmp), oppure il percorso di una cartella (C:\\Utenti\\me\\Cache). Maiuscole e minuscole non contano.',
+        rules: 'Una regola per riga: un nome o un modello (node_modules, *.tmp), oppure il percorso di una cartella (C:\\Users\\me\\Cache). Maiuscole e minuscole non contano.',
         save: 'Salva', close: 'Chiudi', saved: 'Salvato', restart: 'Riavvia ora',
         restartNote: "Salvato. Riavvia lisdir per applicare le modifiche a ciò che viene indicizzato." },
 };
