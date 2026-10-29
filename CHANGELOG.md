@@ -10,6 +10,8 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-29
+
 ### Fixed
 - Settings, *Other PCs*: a badge by the title now says whether searching your other PCs is active (and how many are
   connected), off, or waiting for a restart; below it, each paired PC is listed as connected or not, with when it was
@@ -231,7 +233,10 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.16.3...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/enricoottavoita/lisdir/compare/v0.17.0...v0.17.1
+[0.17.0]: https://github.com/enricoottavoita/lisdir/compare/v0.16.4...v0.17.0
+[0.16.4]: https://github.com/enricoottavoita/lisdir/compare/v0.16.3...v0.16.4
 [0.16.3]: https://github.com/enricoottavoita/lisdir/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/enricoottavoita/lisdir/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/enricoottavoita/lisdir/compare/v0.16.0...v0.16.1
