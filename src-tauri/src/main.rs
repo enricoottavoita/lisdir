@@ -201,6 +201,12 @@ fn pair_state() -> peer::PairState {
     peer::pairing_state()
 }
 
+/// The badge and the list of PCs in the settings: is the option running, and which PCs are connected.
+#[tauri::command]
+fn peer_status() -> (bool, Vec<peer::PeerState>) {
+    (peer::running(), peer::status())
+}
+
 #[tauri::command]
 fn pair_answer(accept: bool) {
     peer::answer_pairing(accept);
@@ -694,7 +700,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, remote_search, peer_code, pair_open, pair_state, pair_answer, pair_close, pair_with, forget, get_settings, save_settings, settings_window, close_window, pick_folder, get_autostart, set_autostart_cmd, list_drives, restart_app])
+        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, remote_search, peer_code, pair_open, pair_state, peer_status, pair_answer, pair_close, pair_with, forget, get_settings, save_settings, settings_window, close_window, pick_folder, get_autostart, set_autostart_cmd, list_drives, restart_app])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

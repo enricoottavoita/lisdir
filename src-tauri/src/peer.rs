@@ -46,11 +46,17 @@ struct Link {
 struct Trust {
     list: RwLock<Vec<(String, EndpointId)>>,
     name: String,
+    /// when each PC last answered us or asked us something
+    seen: StdMutex<HashMap<EndpointId, Instant>>,
 }
 
 impl Trust {
     fn has(&self, id: &EndpointId) -> bool {
         self.list.read().unwrap().iter().any(|p| p.1 == *id)
+    }
+
+    fn saw(&self, id: EndpointId) {
+        self.seen.lock().unwrap().insert(id, Instant::now());
     }
 
     fn add(&self, name: &str, id: EndpointId) {
@@ -250,7 +256,7 @@ pub fn start(peers: Vec<(String, EndpointId)>, search: Search, paired: Paired) {
     let _ = PAIRED.set(paired);
     tauri::async_runtime::spawn(async move {
         let Ok(ep) = Endpoint::builder(presets::N0).secret_key(secret()).alpns(vec![ALPN.to_vec()]).bind().await else { return };
-        let trust = Arc::new(Trust { list: RwLock::new(peers), name: my_name() });
+        let trust = Arc::new(Trust { list: RwLock::new(peers), name: my_name(), seen: StdMutex::default() });
         let peers = Arc::new(Peers { ep: ep.clone(), trust: trust.clone(), links: StdMutex::default() });
         let _ = PEERS.set(peers.clone());
         // connect now, so the first search already has its connections
@@ -295,6 +301,7 @@ async fn serve(conn: Connection, trust: Arc<Trust>, search: Search) {
                 "NO".into()
             }
         } else if trust.has(&who) {
+            trust.saw(who);
             let s = search.clone();
             let hits = tauri::async_runtime::spawn_blocking(move || s(&msg)).await.unwrap_or_default();
             format_reply(&hits)
@@ -326,11 +333,41 @@ async fn ask(peers: &Peers, name: &str, id: EndpointId, q: &str) -> Option<Vec<H
         Some(parse_reply(&String::from_utf8_lossy(&body), name))
     }
     .await;
-    if result.is_none() {
-        link.conn = None;
-        link.down_until = Some(Instant::now() + BACKOFF);
+    match result {
+        Some(_) => peers.trust.saw(id),
+        None => (link.conn, link.down_until) = (None, Some(Instant::now() + BACKOFF)),
     }
     result
+}
+
+#[derive(Serialize)]
+pub struct PeerState {
+    pub name: String,
+    pub code: String,
+    /// a working connection to it right now
+    pub online: bool,
+    /// seconds since it last answered or asked; None if never since lisdir started
+    pub seen: Option<u64>,
+}
+
+/// The trusted PCs and whether each is connected (for the settings window). A PC that is not connected is tried
+/// again in the background, at most once per backoff period, so the list catches up when it comes on.
+pub fn status() -> Vec<PeerState> {
+    let Some(peers) = PEERS.get().cloned() else { return vec![] };
+    let list = peers.trust.list.read().unwrap().clone();
+    list.into_iter()
+        .map(|(name, id)| {
+            let link = peers.links.lock().unwrap().get(&id).cloned();
+            // busy = a question or a connection attempt is in flight: say connected only if that is already known
+            let online = link.is_some_and(|l| l.try_lock().is_ok_and(|l| l.conn.as_ref().is_some_and(|c| c.close_reason().is_none())));
+            if !online {
+                let (peers, name) = (peers.clone(), name.clone());
+                tauri::async_runtime::spawn(async move { ask(&peers, &name, id, " ").await });
+            }
+            let seen = peers.trust.seen.lock().unwrap().get(&id).map(|t| t.elapsed().as_secs());
+            PeerState { name, code: id.to_string(), online, seen }
+        })
+        .collect()
 }
 
 /// Ask every trusted PC at once; the ones that are off or slow are left out.
@@ -404,8 +441,8 @@ mod tests {
         rt.block_on(async {
             let (ks, kc, ke) = (SecretKey::generate(), SecretKey::generate(), SecretKey::generate());
             let (server, client, stranger) = (bind(ks).await, bind(kc.clone()).await, bind(ke.clone()).await);
-            let trust_s = Arc::new(Trust { list: RwLock::new(vec![("Client".into(), kc.public())]), name: "Server".into() });
-            let trust_e = Trust { list: RwLock::new(vec![]), name: "Stranger".into() };
+            let trust_s = Arc::new(Trust { list: RwLock::new(vec![("Client".into(), kc.public())]), name: "Server".into(), seen: StdMutex::default() });
+            let trust_e = Trust { list: RwLock::new(vec![]), name: "Stranger".into(), seen: StdMutex::default() };
             let search: Search = Arc::new(|q| vec![Hit::new(format!("{q}.txt"), format!(r"C:\{q}.txt"), false, 1.0).with_size(3)]);
             let addr = server.addr();
             let (srv, t, s) = (server.clone(), trust_s.clone(), search.clone());
@@ -419,6 +456,7 @@ mod tests {
             let conn = client.connect(addr.clone(), ALPN).await.unwrap();
             let hits = parse_reply(&String::from_utf8(ask_once(&conn, b"hello").await.unwrap()).unwrap(), "S");
             assert_eq!((hits[0].name.as_str(), hits[0].size), ("hello.txt", 3));
+            assert!(trust_s.seen.lock().unwrap().contains_key(&kc.public()), "a question marks the PC as seen");
             // a stranger: no answer to a question, and no pairing while "Allow a new PC" is closed
             let conn = stranger.connect(addr.clone(), ALPN).await.unwrap();
             assert!(ask_once(&conn, b"hello").await.is_err(), "a PC that is not in the list must get no answer");

@@ -10,6 +10,11 @@ when releasing.
 
 ## [Unreleased]
 
+### Fixed
+- Settings, *Other PCs*: a badge by the title now says whether searching your other PCs is active (and how many are
+  connected), off, or waiting for a restart; below it, each paired PC is listed as connected or not, with when it was
+  last seen. Before, nothing showed whether the option was working or which PCs it was talking to.
+
 ## [0.17.0] - 2026-10-29
 
 ### Added

@@ -33,6 +33,14 @@
   .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px }
   .recording input { border-color:var(--hl) }
   .pickrow { margin-top:6px; text-align:right }
+  .badge { margin-left:8px; padding:2px 8px; border-radius:10px; font-size:11px; text-transform:none; letter-spacing:0;
+           background:var(--sel); color:var(--dim) }
+  .badge.on { background:#2da44e; color:#fff }
+  .badge.wait { background:#d29922; color:#fff }
+  .peer { display:flex; align-items:center; gap:8px; padding:4px 0 }
+  .peer i { width:8px; height:8px; border-radius:50%; flex:none; background:var(--dim) }
+  .peer.on i { background:#2da44e }
+  .peer em { color:var(--dim); font-style:normal; font-size:12px }
   [hidden] { display:none !important }
 </style>
 <main>
@@ -90,11 +98,12 @@
     <span class="note" id="s-rules"></span>
   </div>
 
-  <h2 id="h-peers"></h2>
+  <h2><span id="h-peers"></span><span id="peerbadge" class="badge"></span></h2>
   <div class="row">
     <label for="peers_on"><span id="l-peerson"></span><small id="s-peerson"></small></label>
     <input id="peers_on" type="checkbox">
   </div>
+  <div class="block" id="peerlist" hidden></div>
   <div class="block">
     <label for="mycode"><span id="l-mycode"></span><small id="s-mycode"></small></label>
     <div class="keys"><input id="mycode" type="text" readonly spellcheck="false"><button id="copycode" type="button"></button></div>
@@ -153,6 +162,9 @@ const STR = {
         pairGo: 'Pair with another PC', pairGoHint: "On the other PC: press Allow a new PC here, paste that PC's code, then Pair", pairBtn: 'Pair',
         pairWho: (n, c) => `“${n}” wants to pair. Its code starts with ${c.slice(0, 8)} and ends with ${c.slice(-6)}: check it on that PC.`,
         pairYes: 'Allow', pairNo: 'Refuse', pairDone: n => `Paired with ${n}.`, pairWait: 'Waiting for the other PC to confirm…',
+        stOff: 'Off', stRestart: 'Restart lisdir to turn it on', stOffSoon: 'Off after a restart',
+        stOn: n => n ? `Active · ${n} connected` : 'Active · no PC connected',
+        online: 'connected', offline: 'not connected', seen: m => m < 1 ? 'seen just now' : `seen ${m} min ago`,
         copy: 'Copy', peers: 'My other PCs', peersHint: 'One per line: Name|code, with the code shown on that PC. Add this PC on the other one too',
         save: 'Save', close: 'Close', saved: 'Saved', restart: 'Restart now',
         restartNote: 'Saved. Restart lisdir to apply the changes to what is indexed.' },
@@ -180,6 +192,9 @@ const STR = {
         pairGo: 'Abbina un altro PC', pairGoHint: "Sull'altro PC: premi Permetti un nuovo PC, incolla qui il codice di quel PC, poi Abbina", pairBtn: 'Abbina',
         pairWho: (n, c) => `«${n}» vuole abbinarsi. Il suo codice inizia con ${c.slice(0, 8)} e finisce con ${c.slice(-6)}: controllalo su quel PC.`,
         pairYes: 'Consenti', pairNo: 'Rifiuta', pairDone: n => `Abbinato con ${n}.`, pairWait: "In attesa che l'altro PC confermi…",
+        stOff: 'Spenta', stRestart: 'Riavvia lisdir per accenderla', stOffSoon: 'Si spegne al riavvio',
+        stOn: n => n ? `Attiva · ${n} ${n === 1 ? 'connesso' : 'connessi'}` : 'Attiva · nessun PC connesso',
+        online: 'connesso', offline: 'non connesso', seen: m => m < 1 ? 'visto adesso' : `visto ${m} min fa`,
         copy: 'Copia', peers: 'I miei altri PC', peersHint: "Uno per riga: Nome|codice, con il codice mostrato su quel PC. Aggiungi questo PC anche sull'altro",
         save: 'Salva', close: 'Chiudi', saved: 'Salvato', restart: 'Riavvia ora',
         restartNote: "Salvato. Riavvia lisdir per applicare le modifiche a ciò che viene indicizzato." },
@@ -349,9 +364,27 @@ $('pairgo').onclick = async () => {
     $('pairres').textContent = String(err);
   }
 };
+// The badge by the title and the list of paired PCs, refreshed with the pairing state below.
+async function peerStatus() {
+  const [running, list] = await invoke('peer_status').catch(() => [false, []]);
+  const b = $('peerbadge'), n = list.filter(p => p.online).length, saved = current?.peers_on;
+  b.textContent = running ? (saved ? S.stOn(n) : S.stOffSoon) : saved ? S.stRestart : S.stOff;
+  b.className = 'badge' + (running && saved && n ? ' on' : running || saved ? ' wait' : ''); // green when searching others, amber when half-way
+  $('peerlist').hidden = !running || !list.length;
+  $('peerlist').replaceChildren(...list.map(p => {
+    const row = document.createElement('div'), name = document.createElement('span'), info = document.createElement('em');
+    row.className = 'peer' + (p.online ? ' on' : '');
+    row.title = p.code;
+    name.textContent = p.name;
+    info.textContent = p.online ? S.online : S.offline + (p.seen != null ? ' · ' + S.seen(Math.floor(p.seen / 60)) : '');
+    row.append(document.createElement('i'), name, info);
+    return row;
+  }));
+}
 let wasOpen = false;
 setInterval(async () => {
   if (document.hidden) return;
+  peerStatus();
   const st = await invoke('pair_state').catch(() => null);
   if (!st) return;
   $('pairask').hidden = !st.name;
@@ -372,5 +405,6 @@ $('close').onclick = () => invoke('close_window');
   show(c);
   $('autostart').checked = await invoke('get_autostart');
   showDrives(await invoke('list_drives'), c.disks_off);
+  peerStatus();
 })();
 </script>

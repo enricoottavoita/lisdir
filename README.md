@@ -155,7 +155,9 @@ other PCs, and what they find appears after your own results with the PC's name 
 text one way, up to 20 names, paths and sizes the other way, never the files. Only PCs on your list are answered; the
 link is encrypted and tied to each PC's key (`peer.key`, never share it). It connects directly when both networks
 allow it and otherwise through a public relay that only carries encrypted bytes. A PC that is off is skipped, so
-typing never waits for it. Nothing runs, and nothing connects, while the option is off.
+typing never waits for it. Nothing runs, and nothing connects, while the option is off. A badge next to the section
+title says whether the option is active and how many PCs are connected, and the list below it shows each paired PC
+as connected or not, with when it was last seen.
 
 **What is indexed.** In the settings window you can untick a disk, add more folders to walk (the **Add folder…**
 button opens the Windows folder chooser; or type one path per line, for example `\\nas\share`; the older

@@ -49,7 +49,9 @@ interroga anche gli altri PC, e ciò che trovano compare dopo i tuoi risultati c
 il testo della ricerca in un verso, al massimo 20 nomi, percorsi e dimensioni nell'altro, mai i file. Rispondiamo solo
 ai PC nel tuo elenco; il collegamento è cifrato e legato alla chiave di ogni PC (`peer.key`, da non condividere).
 Si collega direttamente quando le reti lo permettono, altrimenti passa da un relay pubblico che trasporta solo byte
-cifrati. Un PC spento viene saltato, quindi scrivere non aspetta mai. Finché l'opzione è spenta non gira e non si
+cifrati. Un PC spento viene saltato, quindi scrivere non aspetta mai. Un badge accanto al titolo della sezione dice se
+l'opzione è attiva e quanti PC sono connessi, e l'elenco sotto mostra ogni PC abbinato, connesso o no, con l'ultima
+volta che è stato visto. Finché l'opzione è spenta non gira e non si
 collega niente.
 
 **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic,
