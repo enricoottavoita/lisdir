@@ -4,6 +4,7 @@ mod apps;
 mod engine;
 mod icons;
 mod mft;
+mod peer;
 mod query;
 mod rules;
 mod service;
@@ -146,19 +147,83 @@ fn recents(app: &App) -> Vec<Hit> {
     hits
 }
 
+/// The files this PC finds for a search text (also what the other PCs get when they ask).
+fn files(app: &App, q: &str, query: &Query) -> Vec<Hit> {
+    let mut hits = vec![];
+    if query.searches_files() {
+        hits = service::search_volumes(&app.network, query);
+        hits.extend(service::query(q).map(|r| r.hits).unwrap_or_default());
+        // apps are ranked together with files; their Start menu shortcuts would only duplicate them
+        hits.retain(|h| !(h.path.contains(r"\Start Menu\Programs\") && h.path.to_lowercase().ends_with(".lnk")));
+    }
+    hits
+}
+
+/// What the other PCs see of this one: its best 20 files for the search text.
+fn shared_files(app: &App, q: &str) -> Vec<Hit> {
+    let query = Query::parse(q, &Clock::system());
+    if query.is_empty() {
+        return vec![];
+    }
+    let mut hits = files(app, q, &query);
+    hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+    hits.truncate(20);
+    hits
+}
+
+/// The same search on the other PCs, asked after the local answer is on screen. Empty when the feature is off.
+#[tauri::command]
+async fn remote_search(q: String) -> Vec<Hit> {
+    if q.trim().is_empty() {
+        return vec![];
+    }
+    let query = Query::parse(&q, &Clock::system());
+    let mut hits = peer::search(q).await;
+    hits.iter_mut().for_each(|h| h.hl = engine::highlight(&query, &h.name));
+    hits
+}
+
+/// This PC's code, to give to the other PC.
+#[tauri::command]
+fn peer_code() -> String {
+    peer::my_code()
+}
+
+/// "Allow a new PC": for two minutes one PC may ask to be paired. False when the option is not running.
+#[tauri::command]
+fn pair_open() -> bool {
+    peer::open_pairing()
+}
+
+/// What the settings window shows while pairing: is it open, and who is asking.
+#[tauri::command]
+fn pair_state() -> peer::PairState {
+    peer::pairing_state()
+}
+
+#[tauri::command]
+fn pair_answer(accept: bool) {
+    peer::answer_pairing(accept);
+}
+
+#[tauri::command]
+fn pair_close() {
+    peer::close_pairing();
+}
+
+/// Ask the PC with this code to pair; its person confirms there. Returns that PC's name.
+#[tauri::command]
+async fn pair_with(code: String) -> Result<String, String> {
+    peer::pair(code).await
+}
+
 #[tauri::command]
 async fn search(q: String, app: State<'_, App>) -> Result<Vec<Hit>, String> {
     let query = Query::parse(&q, &Clock::system());
     if query.is_empty() {
         return Ok(recents(&app));
     }
-    let mut hits = vec![];
-    if query.searches_files() {
-        hits = service::search_volumes(&app.network, &query);
-        hits.extend(service::query(&q).map(|r| r.hits).unwrap_or_default());
-        // apps are ranked together with files; their Start menu shortcuts would only duplicate them
-        hits.retain(|h| !(h.path.contains(r"\Start Menu\Programs\") && h.path.to_lowercase().ends_with(".lnk")));
-    }
+    let mut hits = files(&app, &q, &query);
     if query.wants_apps() {
         hits.extend(apps::search(&app.apps.read().unwrap(), &query, 20).into_iter().map(|(score, a)| Hit::app(&a.name, &a.id, score)));
     }
@@ -311,7 +376,8 @@ fn save_settings(new: settings::Settings, app: AppHandle) -> Result<bool, String
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_visible(!new.hide_tray);
     }
-    let restart = new.index_differs(&state.launched);
+    peer::set_peers(new.peers.iter().filter_map(|l| peer::parse_peer(l)).collect()); // the list applies at once
+    let restart = new.index_differs(&state.launched) || new.peers_differ(&state.launched);
     *state.settings.write().unwrap() = new;
     // the bar re-reads language and theme
     if let Some(w) = app.get_webview_window("main") {
@@ -530,6 +596,20 @@ fn main() {
                 let _ = app.global_shortcut().register("alt+space");
             }
             start(&app.state::<App>());
+            if loaded.peers_on {
+                let (h1, h2) = (app.handle().clone(), app.handle().clone());
+                peer::start(
+                    loaded.peers.iter().filter_map(|l| peer::parse_peer(l)).collect(),
+                    Arc::new(move |q| shared_files(&h1.state::<App>(), q)),
+                    Arc::new(move |name, code| {
+                        // a PC was just paired: keep it in the settings
+                        let state = h2.state::<App>();
+                        let mut s = state.settings.write().unwrap();
+                        s.add_peer(name, code);
+                        let _ = s.save();
+                    }),
+                );
+            }
             typesearch::start(app.handle().clone());
             let type_search = CheckMenuItem::with_id(app, "typesearch", t("Type to search in Explorer/Desktop", "Digita per cercare in Esplora risorse/Desktop"), true, loaded.type_search, None::<&str>)?;
             let autostart = CheckMenuItem::with_id(app, "autostart", t("Start with Windows", "Avvia con Windows"), true, reg(&["query", RUN_KEY, "/v", "lisdir"]), None::<&str>)?;
@@ -614,7 +694,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, forget, get_settings, save_settings, settings_window, close_window, pick_folder, get_autostart, set_autostart_cmd, list_drives, restart_app])
+        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, remote_search, peer_code, pair_open, pair_state, pair_answer, pair_close, pair_with, forget, get_settings, save_settings, settings_window, close_window, pick_folder, get_autostart, set_autostart_cmd, list_drives, restart_app])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

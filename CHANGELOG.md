@@ -10,6 +10,19 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-29
+
+### Added
+- **Other PCs** (optional, off by default): pair two PCs that run lisdir and each one also lists the files found on
+  the other, marked with its name. Pairing is one step: on one PC press *Allow a new PC*, on the other paste that PC's
+  code and press *Pair*, then confirm on the first (it shows who is asking and the start and end of its code); both
+  PCs then list each other, with no restart. There is no account and no server of ours. The link is encrypted and tied to each PC's key, direct when the networks allow it
+  and through a public relay (encrypted bytes only) when they do not. Only the search text and up to 20 names, paths
+  and sizes travel, never files; a result from another PC can only have its path copied. A PC that is off is skipped
+  for a few seconds so typing never waits for it. While the option is off nothing is started.
+
+### Changed
+- The release build is now optimised as a whole (LTO, stripped, libraries built for size) to keep the program small.
 ## [0.16.4] - 2026-10-29
 
 ### Changed

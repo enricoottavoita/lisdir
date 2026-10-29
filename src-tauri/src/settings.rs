@@ -35,6 +35,10 @@ pub struct Settings {
     pub no_index: Vec<String>,
     /// rules for what is indexed but not shown in results
     pub exclude: Vec<String>,
+    /// search the other PCs that run lisdir, and let them search this one (off until switched on)
+    pub peers_on: bool,
+    /// trusted PCs, one `Name|code` per line
+    pub peers: Vec<String>,
 }
 
 impl Default for Settings {
@@ -50,6 +54,8 @@ impl Default for Settings {
             disks_off: vec![],
             no_index: vec![],
             exclude: vec![],
+            peers_on: false,
+            peers: vec![],
         }
     }
 }
@@ -104,7 +110,7 @@ fn clean(list: &[String]) -> Vec<String> {
 impl Settings {
     pub fn parse(text: &str) -> Settings {
         let mut s = Settings::default();
-        let (mut folders, mut disks, mut skip, mut hide) = (vec![], vec![], vec![], vec![]);
+        let (mut folders, mut disks, mut skip, mut hide, mut peers) = (vec![], vec![], vec![], vec![], vec![]);
         for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
             let Some((k, v)) = line.split_once('=') else { continue };
             let v = v.trim();
@@ -119,20 +125,22 @@ impl Settings {
                 "disk_off" => disks.extend(drive_letter(v)),
                 "no_index" => skip.push(v.to_string()),
                 "exclude" => hide.push(v.to_string()),
+                "peers_on" => s.peers_on = truthy(v).unwrap_or(s.peers_on),
+                "peer" => peers.push(v.to_string()),
                 _ => {}
             }
         }
-        (s.folders, s.disks_off, s.no_index, s.exclude) = (clean(&folders), clean(&disks), clean(&skip), clean(&hide));
+        (s.folders, s.disks_off, s.no_index, s.exclude, s.peers) = (clean(&folders), clean(&disks), clean(&skip), clean(&hide), clean(&peers));
         s
     }
 
     pub fn to_text(&self) -> String {
         let b = |v: bool| if v { 1 } else { 0 };
         let mut t = format!(
-            "# lisdir settings (edited from the tray menu: Settings…)\nhotkey={}\nlanguage={}\ntheme={}\nhide_tray={}\ncheck_updates={}\ntype_search={}\n",
-            self.hotkey, self.language, self.theme, b(self.hide_tray), b(self.check_updates), b(self.type_search)
+            "# lisdir settings (edited from the tray menu: Settings…)\nhotkey={}\nlanguage={}\ntheme={}\nhide_tray={}\ncheck_updates={}\ntype_search={}\npeers_on={}\n",
+            self.hotkey, self.language, self.theme, b(self.hide_tray), b(self.check_updates), b(self.type_search), b(self.peers_on)
         );
-        for (key, list) in [("folder", &self.folders), ("disk_off", &self.disks_off), ("no_index", &self.no_index), ("exclude", &self.exclude)] {
+        for (key, list) in [("folder", &self.folders), ("disk_off", &self.disks_off), ("no_index", &self.no_index), ("exclude", &self.exclude), ("peer", &self.peers)] {
             for item in list {
                 t += &format!("{key}={item}\n");
             }
@@ -173,6 +181,18 @@ impl Settings {
         (&self.folders, &self.disks_off, &self.no_index, &self.exclude) != (&other.folders, &other.disks_off, &other.no_index, &other.exclude)
     }
 
+    /// Was the other-PCs option switched on or off? That is read at startup, so a restart applies it (the list of PCs
+    /// applies at once).
+    pub fn peers_differ(&self, other: &Settings) -> bool {
+        self.peers_on != other.peers_on
+    }
+
+    /// Remember a paired PC (or its new name).
+    pub fn add_peer(&mut self, name: &str, code: &str) {
+        self.peers.retain(|l| !l.ends_with(code));
+        self.peers.push(format!("{name}|{code}"));
+    }
+
     /// Turn a settings object coming from the window into a clean one, or say what is wrong with it.
     pub fn checked(mut self) -> Result<Settings, String> {
         if let Some(why) = hotkey_problem(&self.hotkey) {
@@ -185,6 +205,10 @@ impl Settings {
         self.folders = clean(&self.folders.iter().map(|f| f.trim().trim_end_matches('\\').to_string()).collect::<Vec<_>>());
         self.disks_off = clean(&self.disks_off.iter().filter_map(|d| drive_letter(d)).collect::<Vec<_>>());
         (self.no_index, self.exclude) = (clean(&self.no_index), clean(&self.exclude));
+        self.peers = clean(&self.peers);
+        if let Some(bad) = self.peers.iter().find(|l| crate::peer::parse_peer(l).is_none()) {
+            return Err(format!("other PCs: \"{bad}\" is not a valid code (use Name|code)"));
+        }
         Ok(self)
     }
 }
@@ -201,6 +225,7 @@ mod tests {
             hotkey: "ctrl+alt+k".into(), language: "it".into(), theme: "midnight".into(), hide_tray: true, check_updates: false,
             type_search: false, folders: vec![r"\\nas\share".into(), r"E:\Photos".into()], disks_off: vec!["D".into()],
             no_index: vec!["node_modules".into(), "*.tmp".into()], exclude: vec![r"C:\Windows".into()],
+            peers_on: true, peers: vec!["Office|abc".into()],
         };
         assert_eq!(Settings::parse(&s.to_text()), s);
     }

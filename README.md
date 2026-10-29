@@ -38,6 +38,9 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   properties (`Alt+Enter`). The shortcuts also work with the menu closed.
 - **Preview and pins.** `Alt+P` shows a preview pane: the start of a text file, or a thumbnail. `Ctrl+P` pins a
   result so it is always listed first.
+- **Other PCs.** Optional and off by default: pair two PCs that run lisdir (home and office, say) and each one also
+  lists files found on the other, marked with its name. They cannot be opened from afar, only their path copied.
+  Encrypted, direct when the networks allow it; no account. See below.
 - **Settings.** The shortcut that opens the bar, language, colour theme (Windows, Dark, Light, Midnight, Paper),
   start with Windows, and what is indexed: which disks, extra folders (with a folder chooser), and rules for what to
   leave out of the index or hide from the results.
@@ -97,6 +100,7 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/mft.rs` | Reads modified time and size out of a raw NTFS file record |
 | `src-tauri/src/service.rs` | Elevated helper, pipe server/client, scheduled-task install |
 | `src-tauri/src/query.rs` | The search syntax: parsing `ext:`, `date:`, quotes, `docs\`, ... |
+| `src-tauri/src/peer.rs` | Other PCs: the pairing list, the encrypted link (iroh/QUIC), what this PC answers and the questions it asks |
 | `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost; the same list format holds the pins |
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
 | `src-tauri/src/icons.rs` | Shell file-type icons and preview thumbnails rendered to BMP |
@@ -142,6 +146,16 @@ Tray menu options: settings, type-to-search on/off, start with Windows, edit net
 bar (it needs Ctrl, Alt or Win, or is a function key; one another program already uses is refused), language, colour
 theme, hiding the tray icon, the daily update check, start with Windows, type to search, and what is indexed
 (below). They are saved in `%LOCALAPPDATA%\lisdir\settings.txt`, plain `key=value` lines.
+
+**Other PCs.** In the settings window, section *Other PCs*: switch it on, save and restart lisdir (on both PCs). Then
+pair them: on one PC press **Allow a new PC** (open for two minutes), on the other paste the first PC's code and press
+**Pair**. The first PC shows who is asking, with the start and end of that code, and you confirm there; both PCs then
+list each other, with no restart. (The list can also be edited by hand as `Name|code` lines.) From then on a search also asks your
+other PCs, and what they find appears after your own results with the PC's name in front. What travels: the search
+text one way, up to 20 names, paths and sizes the other way, never the files. Only PCs on your list are answered; the
+link is encrypted and tied to each PC's key (`peer.key`, never share it). It connects directly when both networks
+allow it and otherwise through a public relay that only carries encrypted bytes. A PC that is off is skipped, so
+typing never waits for it. Nothing runs, and nothing connects, while the option is off.
 
 **What is indexed.** In the settings window you can untick a disk, add more folders to walk (the **Add folder…**
 button opens the Windows folder chooser; or type one path per line, for example `\\nas\share`; the older

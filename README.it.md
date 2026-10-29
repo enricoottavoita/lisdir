@@ -41,7 +41,18 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Impostazioni.** La scorciatoia che apre la barra, la lingua, il tema dei colori (Windows, Scuro, Chiaro, Notte,
   Carta), l'avvio con Windows e cosa viene indicizzato: quali dischi, altre cartelle (con il selettore di cartelle) e
   regole per ciò che va lasciato fuori dall'indice o nascosto dai risultati.
-- **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic,
+- **Altri PC.** Nelle impostazioni, sezione *Altri PC*: accendi l'opzione, salva e riavvia lisdir (su entrambi i PC). Poi abbinali: su un
+PC premi **Permetti un nuovo PC** (aperto per due minuti), sull'altro incolla il codice del primo e premi **Abbina**. Il
+primo PC mostra chi lo chiede, con inizio e fine del suo codice, e confermi lì; poi i due PC si elencano a vicenda,
+senza riavvio. (L'elenco si può anche modificare a mano con righe `Nome|codice`.) Da quel momento una ricerca
+interroga anche gli altri PC, e ciò che trovano compare dopo i tuoi risultati con il nome del PC davanti. Cosa viaggia:
+il testo della ricerca in un verso, al massimo 20 nomi, percorsi e dimensioni nell'altro, mai i file. Rispondiamo solo
+ai PC nel tuo elenco; il collegamento è cifrato e legato alla chiave di ogni PC (`peer.key`, da non condividere).
+Si collega direttamente quando le reti lo permettono, altrimenti passa da un relay pubblico che trasporta solo byte
+cifrati. Un PC spento viene saltato, quindi scrivere non aspetta mai. Finché l'opzione è spenta non gira e non si
+collega niente.
+
+**Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic,
   dopo aver verificato lo SHA-256 (una copia portatile si aggiorna da sola, restando portatile). Questo controllo è
   l'unica richiesta internet che lisdir fa, e si può spegnere nelle impostazioni.
 - **Interfaccia senza privilegi di amministratore.** La barra gira come utente normale; solo un piccolo

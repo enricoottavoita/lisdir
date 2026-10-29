@@ -51,13 +51,15 @@ pub struct Hit {
     pub size: u64,
     /// pinned by the user: listed first (filled in by the UI process, not sent over the pipe)
     pub pinned: bool,
+    /// name of the other PC this result lives on; empty for this PC
+    pub peer: String,
     #[serde(skip)]
     pub score: f32,
 }
 
 impl Hit {
     pub fn new(name: String, path: String, is_dir: bool, score: f32) -> Self {
-        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], size: 0, pinned: false, name, path, is_dir, score }
+        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], size: 0, pinned: false, peer: String::new(), name, path, is_dir, score }
     }
 
     pub fn with_size(mut self, size: u64) -> Self {
@@ -66,7 +68,7 @@ impl Hit {
     }
 
     pub fn app(name: &str, id: &str, score: f32) -> Self {
-        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, size: 0, pinned: false, score }
+        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, size: 0, pinned: false, peer: String::new(), score }
     }
 }
 

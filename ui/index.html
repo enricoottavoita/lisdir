@@ -122,7 +122,7 @@ function render() {
     tx.className = 'tx';
     tx.append(nameNode(h));
     const s = document.createElement('small');
-    s.textContent = h.app ? S.app : h.path;
+    s.textContent = h.app ? S.app : h.peer ? '🖥 ' + h.peer + ' · ' + h.path : h.path; // 🖥 = on another PC
     tx.append(s);
     li.append(img, tx);
     if (h.pinned) {
@@ -158,7 +158,7 @@ function setPane(on) {
   pvPath = undefined; showPreview();
 }
 function showPreview() {
-  const h = hits[sel], p = pvOn && h && !h.app ? h.path : null;
+  const h = hits[sel], p = pvOn && h && !h.app && !h.peer ? h.path : null;
   if (p === pvPath) return;
   pvPath = p; clearTimeout(pvTimer);
   if (!p) return pv.replaceChildren();
@@ -182,7 +182,8 @@ if (pvOn) setPane(true);
 // The action menu on the selected result, and the shortcut for each action (they work with the menu closed too).
 const ACTS = [['open', 'Enter'], ['folder', 'Ctrl+Enter'], ['copy', 'Ctrl+C'], ['cut', 'Ctrl+X'], ['path', 'Ctrl+Shift+C'],
               ['openas', ''], ['terminal', 'Ctrl+T'], ['properties', 'Alt+Enter'], ['pin', 'Ctrl+P']];
-const menuActs = () => hits[sel]?.app ? ACTS.filter(([a]) => a === 'open' || a === 'pin') : ACTS; // apps open or pin
+// apps open or pin; a file on another PC can only have its path copied
+const menuActs = () => hits[sel]?.peer ? ACTS.filter(([a]) => a === 'path') : hits[sel]?.app ? ACTS.filter(([a]) => a === 'open' || a === 'pin') : ACTS;
 const mn = document.getElementById('menu');
 let menu = -1; // highlighted menu row; -1 = closed
 function showMenu() {
@@ -203,6 +204,7 @@ function showMenu() {
 function act(a) {
   const h = hits[sel];
   menu = -1; showMenu();
+  if (h?.peer) return a === 'pin' ? null : invoke('act', { action: 'path', path: h.path, isDir: h.is_dir });
   if (a === 'open' || a === 'folder') return go(sel, a === 'folder');
   if (a === 'pin' && h) return invoke('pin', { path: h.path, name: h.name, isDir: h.is_dir, app: !!h.app }).then(() => run(true));
   if (h && !h.app) invoke('act', { action: a, path: h.path, isDir: h.is_dir });
@@ -217,16 +219,29 @@ function keyAct(e) {
   return { KeyC: e.shiftKey ? 'path' : 'copy', KeyX: 'cut' }[e.code] ?? null;
 }
 document.onmousedown = e => { if (menu >= 0 && !mn.contains(e.target)) { menu = -1; showMenu(); } };
+let remoteTimer, remoteHits = [], remoteQ = null; // the last answer of the other PCs, kept while a refresh asks again
 async function run(refresh) {
   const my = ++seq, r = await invoke('search', { q: q.value }), cur = hits[sel]?.path;
   if (my !== seq) return; // drop stale answers
+  const qq = q.value, keep = remoteQ === qq ? remoteHits : [], all = r.concat(keep);
   // a refresh while indexing keeps the selected item; typing starts again from the top
-  const at = refresh === true && cur ? r.findIndex(h => h.path === cur) : -1;
-  hits = r; sel = Math.max(at, 0); render(); showHint();
+  const at = refresh === true && cur ? all.findIndex(h => h.path === cur) : -1;
+  hits = all; sel = Math.max(at, 0); render(); showHint();
+  // the other PCs answer after the local list is on screen (the answer is empty at once when the feature is off)
+  clearTimeout(remoteTimer);
+  if (qq.trim()) remoteTimer = setTimeout(async () => {
+    const more = await invoke('remote_search', { q: qq });
+    if (my !== seq) return;
+    remoteHits = more; remoteQ = qq;
+    if (!more.length && !keep.length) return;
+    const at = hits[sel]?.path;
+    hits = r.concat(more); sel = Math.max(hits.findIndex(h => h.path === at), 0); render();
+  }, refresh === true && keep.length ? 1000 : 150);
 }
 function go(i, folder) {
   const h = hits[i];
   if (!h || (h.app && folder)) return; // an app has no folder to reveal
+  if (h.peer) { sel = i; return act('path'); } // not on this PC: copy its path instead of opening
   invoke('open', { path: h.path, folder, name: h.name, isDir: h.is_dir, app: !!h.app });
   invoke('hide');
 }

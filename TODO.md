@@ -20,6 +20,7 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Update check and one-click update from the tray menu, verified by SHA-256 (0.13.2)
 - [x] Network results shown while the first walk is still running; app list refreshed when the bar opens;
       `Shift+Del` clears all recent items (0.13.2)
+- [x] Other PCs: search the files of your other computers over an encrypted link, off by default (0.17)
 - [x] The recent list is titled and drawn in grey, so it reads as history, not as results (0.16.4)
 - [x] `size:` filter and exact modified times from the NTFS file records (0.14)
 - [x] Search on several cores; the cache is saved without pausing searches (0.14.1)
@@ -37,7 +38,7 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Index non-NTFS local disks (USB sticks, exFAT/FAT) by walking them; results are kept while the drive is
       unplugged (0.16)
 
-## 0.17 — search window
+## 0.18 — search window
 - [ ] Persistent search window that stays open to compare files
 - [ ] Sortable columns including size and date modified
 - [ ] Multi-select: copy, cut, delete, copy paths, drag several files at once
@@ -45,7 +46,7 @@ unelevated, and every feature ships with a test or a measured check.
       Ctrl+click combines several
 - [ ] Switch between the quick bar and the window with double-tap `Ctrl`, keeping the query
 
-## 0.18 — diagnostics
+## 0.19 — diagnostics
 - [ ] **"Why can't I find this?"** — give a path or file name and explain: not on an indexed disk, excluded,
       unsupported file system, helper not running, network folder not yet walked, and how to fix it
 - [ ] About page: item counts, per-volume status, last walk times, and a small built-in speed test
