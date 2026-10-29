@@ -1,5 +1,6 @@
 //! The action menu on a result: copy / cut as files (pasteable in Explorer), copy path, open with, terminal here,
 //! properties.
+use crate::engine::wide;
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr::null_mut;
@@ -10,10 +11,6 @@ use windows_sys::Win32::UI::Shell::*;
 
 const CF_UNICODETEXT: u32 = 13;
 const CF_HDROP: u32 = 15;
-
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain([0]).collect()
-}
 
 fn bytes(w: &[u16]) -> Vec<u8> {
     w.iter().flat_map(|c| c.to_le_bytes()).collect()

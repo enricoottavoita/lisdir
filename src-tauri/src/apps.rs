@@ -29,7 +29,7 @@ pub fn parse(out: &str) -> Vec<App> {
 pub fn load() -> Vec<App> {
     std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .creation_flags(engine::NO_WINDOW)
         .output()
         .map(|o| parse(&String::from_utf8_lossy(&o.stdout)))
         .unwrap_or_default()

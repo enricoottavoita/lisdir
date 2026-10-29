@@ -30,6 +30,14 @@ const REASON_RENAME_NEW: u32 = 0x2000;
 const REASON_DATA: u32 = 0x1 | 0x2 | 0x4;
 const REASON_CLOSE: u32 = 0x8000_0000;
 
+/// CREATE_NO_WINDOW: no console flash for a child process.
+pub const NO_WINDOW: u32 = 0x0800_0000;
+
+/// A string as the NUL-terminated UTF-16 that Windows APIs take.
+pub fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain([0]).collect()
+}
+
 pub struct Entry {
     parent: u64,
     pub name: String,
@@ -110,12 +118,17 @@ impl Index {
         let old = self.items[self.slot.remove(frn)? as usize].1.take();
         let holes = self.items.len() - self.slot.len();
         if holes >= COMPACT_MIN && holes * 8 > self.items.len() {
-            self.items.retain(|x| x.1.is_some());
-            for (i, (f, _)) in self.items.iter().enumerate() {
-                self.slot.insert(*f, i as u32);
-            }
+            self.reindex();
         }
         old
+    }
+
+    /// Squeeze the holes out of `items` and point `slot` at the new positions.
+    fn reindex(&mut self) {
+        self.items.retain(|x| x.1.is_some());
+        for (i, (f, _)) in self.items.iter().enumerate() {
+            self.slot.insert(*f, i as u32);
+        }
     }
 
     /// Keep the entries `keep` says yes to (it may also change them).
@@ -126,10 +139,7 @@ impl Index {
                 self.slot.remove(f);
             }
         }
-        self.items.retain(|x| x.1.is_some());
-        for (i, (f, _)) in self.items.iter().enumerate() {
-            self.slot.insert(*f, i as u32);
-        }
+        self.reindex();
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &u64> {
@@ -242,7 +252,7 @@ impl Drop for Handle {
 }
 
 fn open_volume(letter: char) -> Result<Handle, String> {
-    let path: Vec<u16> = format!(r"\\.\{letter}:").encode_utf16().chain([0]).collect();
+    let path = wide(&format!(r"\\.\{letter}:"));
     let h = unsafe {
         CreateFileW(path.as_ptr(), 0x8000_0000 /* GENERIC_READ */, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             null_mut(), OPEN_EXISTING, 0, null_mut())
@@ -730,7 +740,7 @@ pub const WALK_INTERVAL: Duration = Duration::from_secs(600);
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 fn is_remote(letter: char) -> bool {
-    let p: Vec<u16> = format!("{letter}:\\").encode_utf16().chain([0]).collect();
+    let p = wide(&format!("{letter}:\\"));
     unsafe { GetDriveTypeW(p.as_ptr()) == 4 } // DRIVE_REMOTE
 }
 
@@ -749,7 +759,7 @@ pub struct Drive {
 
 /// Volume label and file system name ("NTFS", "exFAT", ...); empty when the drive cannot be read.
 fn volume_info(letter: char) -> (String, String) {
-    let root: Vec<u16> = format!("{letter}:\\").encode_utf16().chain([0]).collect();
+    let root = wide(&format!("{letter}:\\"));
     let (mut label, mut fs) = ([0u16; 261], [0u16; 64]);
     let ok = unsafe { GetVolumeInformationW(root.as_ptr(), label.as_mut_ptr(), 261, null_mut(), null_mut(), null_mut(), fs.as_mut_ptr(), 64) };
     let text = |b: &[u16]| String::from_utf16_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]);
@@ -782,7 +792,7 @@ pub fn drives(disks_off: &[String]) -> Vec<Drive> {
         if mask >> (l as u8 - b'A') & 1 == 0 {
             continue;
         }
-        let path: Vec<u16> = format!("{l}:\\").encode_utf16().chain([0]).collect();
+        let path = wide(&format!("{l}:\\"));
         let (label, fs) = volume_info(l);
         let kind = match unsafe { GetDriveTypeW(path.as_ptr()) } {
             4 => "network",

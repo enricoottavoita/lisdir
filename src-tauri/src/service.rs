@@ -5,7 +5,7 @@
 //! Wire format, one request per line: `S\t<query>\n`. Reply: `H\t<score>\t<is_dir>\t<name>\t<path>\t<size>\n`*
 //! then `E\t<busy 0|1>\t<item count>\n`. An empty query returns only the `E` line (a status probe). `Q\n` makes
 //! the helper exit.
-use crate::{engine, query::{Clock, Query}};
+use crate::{engine::{self, wide, NO_WINDOW}, query::{Clock, Query}};
 use serde::Serialize;
 use std::{
     fs::{File, OpenOptions},
@@ -32,7 +32,6 @@ use windows_sys::Win32::{
 
 const PIPE: &str = r"\\.\pipe\lisdir";
 const TASK: &str = "lisdir-helper";
-const NO_WINDOW: u32 = 0x0800_0000; // CREATE_NO_WINDOW: no console flash for child processes
 
 pub type Shared = Arc<RwLock<engine::Volume>>;
 pub type Volumes = Arc<RwLock<Vec<Shared>>>;
@@ -75,10 +74,6 @@ pub struct Reply {
     pub hits: Vec<Hit>,
     pub busy: bool,
     pub count: usize,
-}
-
-pub fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain([0]).collect()
 }
 
 /// Best 20 matches across all volumes, highest score first.
@@ -140,7 +135,7 @@ fn tail(vol: Shared) {
 fn load_ntfs(vols: Volumes, busy: Arc<AtomicUsize>) {
     busy.fetch_add(1, SeqCst);
     let settings = crate::settings::Settings::load();
-    settings.apply_rules();
+    crate::rules::set(&settings.no_index, &settings.exclude);
     for l in 'A'..='Z' {
         if engine::is_network_drive(l) || settings.disk_is_off(l) {
             continue; // network drives are the UI's job: it has the user's credentials and drive mappings

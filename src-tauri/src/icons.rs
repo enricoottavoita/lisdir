@@ -56,7 +56,7 @@ pub fn icon_png(key: &str, path: &str) -> Option<Vec<u8>> {
         k if k.starts_with('.') => (k, SHGFI_USEFILEATTRIBUTES, FILE_ATTRIBUTE_NORMAL),
         _ => (path, 0, 0),
     };
-    let wide: Vec<u16> = target.encode_utf16().chain([0]).collect();
+    let wide = crate::engine::wide(target);
     unsafe {
         let mut fi: SHFILEINFOW = zeroed();
         // flags 0 for size = SHGFI_LARGEICON (32x32)
@@ -82,7 +82,7 @@ pub fn thumbnail_png(path: &str, px: i32) -> Option<Vec<u8>> {
     }
     const IID: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0xbcc18b79_ba16_442f_80c4_8a59c30c463b);
     com();
-    let wide: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    let wide = crate::engine::wide(path);
     unsafe {
         let mut f: *mut *const Vtbl = null_mut();
         if SHCreateItemFromParsingName(wide.as_ptr(), null_mut(), &IID, (&mut f as *mut *mut *const Vtbl).cast()) != 0 {
@@ -110,7 +110,7 @@ pub fn thumbnail_png(path: &str, px: i32) -> Option<Vec<u8>> {
 
 /// Icon of a Start menu / Store app, addressed through its `shell:AppsFolder` item.
 unsafe fn app_icon(id: &str) -> Option<Vec<u8>> {
-    let name: Vec<u16> = format!(r"shell:AppsFolder\{id}").encode_utf16().chain([0]).collect();
+    let name = crate::engine::wide(&format!(r"shell:AppsFolder\{id}"));
     let mut pidl = null_mut();
     if SHParseDisplayName(name.as_ptr(), null_mut(), &mut pidl, 0, null_mut()) != 0 {
         return None;

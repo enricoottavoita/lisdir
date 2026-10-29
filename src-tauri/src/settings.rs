@@ -163,11 +163,6 @@ impl Settings {
         LANGUAGE.store(LANGUAGES.iter().position(|l| *l == self.language).unwrap_or(0) as u8, Ordering::SeqCst);
     }
 
-    /// Put the indexing rules in force for this process.
-    pub fn apply_rules(&self) {
-        crate::rules::set(&self.no_index, &self.exclude);
-    }
-
     /// Is this drive switched off for indexing?
     pub fn disk_is_off(&self, letter: char) -> bool {
         self.disks_off.iter().any(|d| d.eq_ignore_ascii_case(&letter.to_string()))

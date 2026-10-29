@@ -4,12 +4,11 @@
 //! newest version and the installer's hash. We fetch it with the `curl.exe` that ships with Windows, download the
 //! installer, check the hash, and hand it to Windows (UAC prompt). The installer replaces the app and restarts it.
 //! A portable copy (no uninstaller next to the exe) instead downloads `lisdir-X.Y.Z-portable.exe` and swaps it in.
-use crate::service::wide;
+use crate::engine::{wide, NO_WINDOW};
 use std::{os::windows::process::CommandExt, path::PathBuf, process::Command, ptr::null_mut};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 
 const RELEASES: &str = "https://github.com/enricoottavoita/lisdir/releases";
-const NO_WINDOW: u32 = 0x0800_0000;
 
 /// LISDIR_UPDATE_URL points the check at another place with the same layout (a local folder, for testing).
 fn base() -> String {

@@ -232,7 +232,7 @@ fn open(path: String, folder: bool, name: String, is_dir: bool, app: bool, state
         let _ = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
     } else {
         // ShellExecute, like double-clicking in Explorer: no console window flashing up (unlike `cmd /c start`).
-        let (verb, file): (Vec<u16>, Vec<u16>) = ("open\0".encode_utf16().collect(), path.encode_utf16().chain([0]).collect());
+        let (verb, file) = (engine::wide("open"), engine::wide(&path));
         unsafe { windows_sys::Win32::UI::Shell::ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), 1 /* SW_SHOWNORMAL */) };
     }
 }
@@ -450,7 +450,7 @@ fn edit_roots() {
 }
 
 fn reg(args: &[&str]) -> bool {
-    std::process::Command::new("reg").args(args).creation_flags(0x0800_0000).status().is_ok_and(|s| s.success())
+    std::process::Command::new("reg").args(args).creation_flags(engine::NO_WINDOW).status().is_ok_and(|s| s.success())
 }
 
 fn set_autostart(on: bool) {
@@ -511,7 +511,7 @@ fn main() {
     }
     update::cleanup();
     let loaded = settings::Settings::load();
-    loaded.apply_rules();
+    rules::set(&loaded.no_index, &loaded.exclude);
     typesearch::ENABLED.store(loaded.type_search, Ordering::SeqCst);
     tauri::Builder::default()
         .plugin(
