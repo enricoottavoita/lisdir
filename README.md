@@ -24,7 +24,8 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 - **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher. Several words
   match in any order, and the matched letters are highlighted.
 - **Search syntax.** Narrow with `ext:pdf`, `date:week`, `size:>1gb`, `-draft`, `"exact phrase"`, `docs\ report`; see below.
-- **Recent items.** Open the bar and type nothing to see your pinned items, then what you opened lately (`Del`
+- **Recent items.** Open the bar and type nothing to see your pinned items, then what you opened lately, under a
+  grey "Recently opened" heading so it reads as history (`Del`
   removes one, `Shift+Del` clears the list). Things you open often rank a little higher, but how well the name
   matches always counts most.
 - **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`. The

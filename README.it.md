@@ -24,7 +24,8 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Ricerca approssimata.** `rdme` trova `README.md`; inizi di parola e lettere consecutive
   valgono di più. Più parole si trovano in qualsiasi ordine e le lettere trovate sono evidenziate.
 - **Sintassi di ricerca.** Restringi con `ext:pdf`, `date:week`, `size:>1gb`, `-bozza`, `"frase esatta"`, `docs\ relazione`: vedi sotto.
-- **Elementi recenti.** Apri la barra senza scrivere per vedere i preferiti fissati e poi cosa hai aperto di recente
+- **Elementi recenti.** Apri la barra senza scrivere per vedere i preferiti fissati e poi cosa hai aperto di recente, sotto il
+  titolo grigio «Aperti di recente» perché si legga come cronologia
   (`Canc` ne rimuove uno, `Maiusc+Canc` svuota l'elenco).
   Ciò che apri spesso sale un poco, ma conta sempre di più quanto il nome corrisponde.
 - **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.

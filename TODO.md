@@ -20,6 +20,7 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Update check and one-click update from the tray menu, verified by SHA-256 (0.13.2)
 - [x] Network results shown while the first walk is still running; app list refreshed when the bar opens;
       `Shift+Del` clears all recent items (0.13.2)
+- [x] The recent list is titled and drawn in grey, so it reads as history, not as results (0.16.4)
 - [x] `size:` filter and exact modified times from the NTFS file records (0.14)
 - [x] Search on several cores; the cache is saved without pausing searches (0.14.1)
 - [x] File sizes shown in the results; changes appended to a log instead of rewriting the cache; entries in one
