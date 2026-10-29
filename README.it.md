@@ -93,7 +93,8 @@ Altre cartelle di rete si aggiungono in `%LOCALAPPDATA%\lisdir\roots.txt`, un pe
 dell'icona: **Cartelle di rete…**).
 
 **Cosa viene indicizzato.** Nella finestra delle impostazioni puoi togliere la spunta a un disco, aggiungere altre
-cartelle da scansionare (un percorso per riga, ad esempio `\\nas\condivisione`) e scrivere delle regole:
+cartelle da scansionare (con il pulsante **Aggiungi cartella…** scegli la cartella dal selettore di Windows, oppure
+scrivi un percorso per riga, ad esempio `\\nas\condivisione`) e scrivere delle regole:
 **Non indicizzare** lascia fuori dall'indice i nomi e le cartelle che corrispondono, con tutto quello che contengono
 (risparmia memoria); **Nascondi dai risultati** li lascia indicizzati ma non li mostra mai. Una regola è un nome o un
 modello (`node_modules`, `*.tmp`, `~$*`; `*` è un testo qualsiasi, `?` un carattere) oppure il percorso di una cartella

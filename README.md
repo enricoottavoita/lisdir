@@ -134,8 +134,8 @@ Tray menu options: settings, type-to-search on/off, start with Windows, edit net
 **Settings** (tray menu → Settings…, or `Ctrl+,` in the bar): the shortcut that opens the bar, language, colour theme,
 hiding the tray icon, the daily update check, start with Windows, type to search, and what is indexed (below). They are saved in `%LOCALAPPDATA%\lisdir\settings.txt`.
 
-**What is indexed.** In the settings window you can untick a disk, add more folders to walk (one path per line,
-for example `\\nas\share`; the older `%LOCALAPPDATA%\lisdir\roots.txt` still works), and write rules:
+**What is indexed.** In the settings window you can untick a disk, add more folders to walk (the **Add folder…**
+button opens the Windows folder chooser; or type one path per line, for example `\\nas\share`; the older `%LOCALAPPDATA%\lisdir\roots.txt` still works), and write rules:
 
 | Rule | Effect |
 |---|---|
