@@ -92,7 +92,20 @@ Esegui comunque*.
 Altre cartelle di rete si aggiungono in `%LOCALAPPDATA%\lisdir\roots.txt`, un percorso per riga (dal menu
 dell'icona: **Cartelle di rete…**).
 
-**Impostazioni** (menu dell'icona → Impostazioni…, oppure `Ctrl+,` nella barra): la scorciatoia che apre la barra, la lingua, il tema dei colori, il nascondere l'icona e il controllo giornaliero degli aggiornamenti. Sono salvate in `%LOCALAPPDATA%\lisdir\settings.txt`.
+**Cosa viene indicizzato.** Nella finestra delle impostazioni puoi togliere la spunta a un disco, aggiungere altre
+cartelle da scansionare (un percorso per riga, ad esempio `\\nas\condivisione`) e scrivere delle regole:
+**Non indicizzare** lascia fuori dall'indice i nomi e le cartelle che corrispondono, con tutto quello che contengono
+(risparmia memoria); **Nascondi dai risultati** li lascia indicizzati ma non li mostra mai. Una regola è un nome o un
+modello (`node_modules`, `*.tmp`, `~$*`; `*` è un testo qualsiasi, `?` un carattere) oppure il percorso di una cartella
+(`C:\Utenti\me\Cache`); maiuscole e minuscole non contano. Le modifiche a dischi, cartelle e regole valgono dopo un
+riavvio, e la finestra ha il pulsante **Riavvia ora**. Rimuovere o cambiare una regola di non indicizzazione ricostruisce
+una volta l'indice dei dischi locali.
+
+I dischi locali che non sono NTFS (chiavette USB, dischi exFAT e FAT) vengono indicizzati scorrendo le cartelle, e una
+chiavetta già vista mantiene i suoi risultati mentre è scollegata.
+
+**Impostazioni** (menu dell'icona → Impostazioni…, oppure `Ctrl+,` nella barra): la scorciatoia che apre la barra, la lingua, il tema dei colori, il nascondere l'icona, il controllo giornaliero degli aggiornamenti, l'avvio con Windows, «digita
+per cercare» e cosa viene indicizzato (qui sotto). Sono salvate in `%LOCALAPPDATA%\lisdir\settings.txt`.
 
 **Aggiornamenti.** lisdir controlla le release su GitHub pochi secondi dopo l'avvio e poi ogni giorno; se ce n'è una
 nuova, il menu dell'icona propone «Aggiorna a X.Y.Z…» (oppure scegli «Controlla aggiornamenti…» quando vuoi). Scarica
@@ -114,7 +127,9 @@ cargo build --release
 
 ## Limiti
 
-- Solo NTFS per i dischi locali (ReFS, exFAT e FAT non sono indicizzati).
+- I dischi locali si leggono dalla MFT solo se sono NTFS; gli altri file system locali (exFAT, FAT) vengono scansionati
+  cartella per cartella, e le modifiche compaiono al prossimo aggiornamento. I volumi ReFS e le unità ottiche non sono
+  indicizzati.
 - Le cartelle di rete vengono riscansionate, non osservate: le modifiche compaiono al prossimo aggiornamento.
 - Una cartella di rete alla primissima scansione mostra risultati parziali finché non è finita (minuti per una
   condivisione molto grande); dagli avvii successivi usa la cache.
@@ -127,8 +142,9 @@ cargo build --release
 - Non si possono ancora ordinare i risultati per dimensione o data, e `size:` non trova le cartelle.
 - L'anteprima legge il testo come UTF-8: le lettere accentate dei vecchi file ANSI appaiono come `�` e un file UTF-16 mostra la sua icona.
 - Il menu azioni agisce su un risultato alla volta (più file insieme arriveranno con la finestra di ricerca).
-- Non ancora presenti: scelta delle cartelle indicizzate, regole di esclusione,
-  integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
+- Le regole di nascondimento valgono per ciò che è indicizzato; le regole con un percorso indicano cartelle, non singoli
+  file.
+- Non ancora presenti: integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 
 ## Licenza
 

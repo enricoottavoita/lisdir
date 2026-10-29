@@ -32,11 +32,10 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Dates in words: `date:3d`, `date:monday`, `date:lastweek`, and the Italian forms (`date:ieri`, `date:lunedì`)
 - [x] Settings window: configurable hotkey (plain character keys such as `Space` alone are refused), language
       override, theme presets, hide the tray icon, option to turn off the daily update check
-- [ ] Settings window: also Start with Windows and Type to search (today only in the tray menu)
-- [ ] Choose which folders are indexed
-- [ ] **Exclude from results** (still indexed, hidden from results) and **do not index** rules
-      (`node_modules`, `.git`, caches)
-- [ ] Index non-NTFS local disks (USB sticks, exFAT/FAT) with the directory walker; keep their results while the
+- [x] Settings window: also Start with Windows and Type to search
+- [x] Choose which disks and extra folders are indexed
+- [x] **Hide from results** (still indexed) and **do not index** rules (`node_modules`, `.git`, caches)
+- [x] Index non-NTFS local disks (USB sticks, exFAT/FAT) with the directory walker; results are kept while the
       drive is unplugged
 
 ## 0.17 — search window

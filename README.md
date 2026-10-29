@@ -16,8 +16,9 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   move or delete show up within a couple of seconds, and so do edits (the modified time and size are refreshed when
   a file is closed). The index is cached on disk, so a restart only has to catch up on what changed; between
   restarts only the changes are appended to a small log, not the whole cache rewritten.
-- **Network folders.** Mapped drives and UNC paths (SMB shares) are indexed by a parallel directory walk and
-  refreshed every 10 minutes. On the very first walk, results appear while it is still running.
+- **Network folders and other disks.** Mapped drives, UNC paths (SMB shares) and local disks that are not NTFS (USB
+  sticks, exFAT, FAT) are indexed by a parallel directory walk and refreshed every 10 minutes. A stick keeps its
+  results while unplugged. On the very first walk, results appear while it is still running.
 - **Type to search.** With an Explorer folder or the desktop focused, typing letters opens the bar with those
   letters already entered (toggle it in the tray menu).
 - **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher. Several words
@@ -95,7 +96,8 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
 | `src-tauri/src/icons.rs` | Shell file-type icons and preview thumbnails rendered to PNG |
 | `src-tauri/src/actions.rs` | The action menu: files on the clipboard as Explorer puts them, open with, terminal, properties; text for the preview |
-| `src-tauri/src/settings.rs` | The settings file: shortcut, language, theme, tray icon, update check |
+| `src-tauri/src/settings.rs` | The settings file: shortcut, language, theme, tray icon, update check, indexed disks and folders, rules |
+| `src-tauri/src/rules.rs` | The do-not-index and hide-from-results rules |
 | `src-tauri/src/update.rs` | Update check against the GitHub releases; downloads and verifies the installer, or swaps in the portable exe |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
 | `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
@@ -130,9 +132,19 @@ The executables are not code-signed yet, so SmartScreen may warn: *More info →
 Tray menu options: settings, type-to-search on/off, start with Windows, edit network folders, check for updates, install the service.
 
 **Settings** (tray menu → Settings…, or `Ctrl+,` in the bar): the shortcut that opens the bar, language, colour theme,
-hiding the tray icon, and the daily update check. They are saved in `%LOCALAPPDATA%\lisdir\settings.txt`.
+hiding the tray icon, the daily update check, start with Windows, type to search, and what is indexed (below). They are saved in `%LOCALAPPDATA%\lisdir\settings.txt`.
 
-Extra network folders go in `%LOCALAPPDATA%\lisdir\roots.txt`, one path per line.
+**What is indexed.** In the settings window you can untick a disk, add more folders to walk (one path per line,
+for example `\\nas\share`; the older `%LOCALAPPDATA%\lisdir\roots.txt` still works), and write rules:
+
+| Rule | Effect |
+|---|---|
+| **Do not index** | matching names and folders are left out of the index, with everything inside (saves memory) |
+| **Hide from results** | matching names and folders stay indexed but are never shown |
+
+A rule is a name or pattern (`node_modules`, `*.tmp`, `~$*`; `*` is any text, `?` one character) or the path of a
+folder (`C:\Users\me\Cache`); case does not matter. Changes to disks, folders and rules apply after a restart; the
+window has a **Restart now** button. Removing or changing a do-not-index rule rebuilds the local disks' index once.
 
 **Updates.** lisdir checks the GitHub releases a few seconds after it starts and then daily; when a newer one
 exists the tray menu offers "Update to X.Y.Z…" (or choose "Check for updates…" at any time). It downloads the
@@ -147,7 +159,8 @@ does all of this in CI and publishes a GitHub release.
 
 ## Limitations and roadmap
 
-- NTFS only for local disks (ReFS, exFAT and FAT volumes are not indexed).
+- Local disks are read from the MFT only when they are NTFS; other local file systems (exFAT, FAT) are walked, which
+  is slower to build and does not see changes until the next refresh. ReFS volumes and optical drives are not indexed.
 - Network folders are re-walked rather than watched, so changes appear after the next refresh.
 - Sizes and times on local disks come from the NTFS file records. A file whose data attribute sits in an extension
   record (a heavily fragmented or very attribute-rich file) reports size 0, and the size is not shown for it.
@@ -162,8 +175,9 @@ does all of this in CI and publishes a GitHub release.
 - There is no way yet to sort results by size or date, and `size:` does not match folders.
 - The text preview reads files as UTF-8: accented letters in older ANSI files show as `�`, and a UTF-16 file shows its icon.
 - The action menu works on one result at a time (several at once comes with the search window).
-- Not yet implemented: choosing which folders are indexed, exclude rules, Open/Save
-  dialog integration, content search.
+- If a folder is renamed to a name a hide rule matches, the files already inside it are hidden only after the next
+  restart. Path rules name folders, not single files.
+- Not yet implemented: Open/Save dialog integration, content search.
   The plan is in [TODO.md](TODO.md).
 
 ## Contributing

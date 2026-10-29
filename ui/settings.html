@@ -7,26 +7,37 @@
   * { box-sizing:border-box }
   html, body { margin:0; background:var(--bg); color:var(--fg); font:14px "Segoe UI",sans-serif }
   main { padding:20px 24px 24px }
-  h1 { margin:0 0 16px; font-size:18px; font-weight:600 }
+  h1 { margin:0 0 8px; font-size:18px; font-weight:600 }
+  h2 { margin:22px 0 4px; font-size:13px; font-weight:600; color:var(--dim); text-transform:uppercase; letter-spacing:.04em }
   .row { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line) }
-  .row:first-of-type { border-top:0 }
+  h1 + .row, h2 + .row { border-top:0 }
   .row label { flex:1; min-width:0 }
-  .row small { display:block; color:var(--dim); font-size:12px; margin-top:2px }
-  select, input[type=text] { width:200px; padding:6px 8px; font:inherit; color:inherit; background:var(--sel);
-                              border:1px solid var(--line); border-radius:6px }
-  input[type=checkbox] { width:18px; height:18px }
+  .row small, .block small, .note { display:block; color:var(--dim); font-size:12px; margin-top:2px }
+  select, input[type=text], textarea { width:200px; padding:6px 8px; font:inherit; color:inherit; background:var(--sel);
+                                        border:1px solid var(--line); border-radius:6px }
+  textarea { width:100%; height:78px; resize:vertical; font:12px Consolas,monospace }
+  input[type=checkbox] { width:18px; height:18px; flex:none }
   button { padding:6px 12px; font:inherit; color:inherit; background:var(--sel); border:1px solid var(--line);
            border-radius:6px; cursor:pointer }
   button.primary { background:var(--hl); color:#fff; border-color:transparent }
   .keys { display:flex; gap:6px }
   .keys input { width:130px }
+  .block { padding:10px 0; border-top:1px solid var(--line) }
+  h2 + .block { border-top:0 }
+  .block > label { display:block; margin-bottom:6px }
+  .drive { display:flex; align-items:center; gap:10px; padding:5px 0 }
+  .drive span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .drive em { color:var(--dim); font-style:normal; font-size:12px }
   #msg { min-height:20px; margin-top:12px; font-size:13px; color:var(--dim) }
   #msg.err { color:#e5484d }
   .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px }
   .recording input { border-color:var(--hl) }
+  [hidden] { display:none !important }
 </style>
 <main>
   <h1 id="title"></h1>
+
+  <h2 id="h-general"></h2>
   <div class="row">
     <label for="hotkey"><span id="l-hotkey"></span><small id="s-hotkey"></small></label>
     <div class="keys"><input id="hotkey" type="text" spellcheck="false" autocomplete="off"><button id="rec" type="button"></button></div>
@@ -40,6 +51,14 @@
     <select id="theme"></select>
   </div>
   <div class="row">
+    <label for="autostart"><span id="l-autostart"></span></label>
+    <input id="autostart" type="checkbox">
+  </div>
+  <div class="row">
+    <label for="type_search"><span id="l-typesearch"></span><small id="s-typesearch"></small></label>
+    <input id="type_search" type="checkbox">
+  </div>
+  <div class="row">
     <label for="check_updates"><span id="l-updates"></span><small id="s-updates"></small></label>
     <input id="check_updates" type="checkbox">
   </div>
@@ -47,28 +66,74 @@
     <label for="hide_tray"><span id="l-tray"></span><small id="s-tray"></small></label>
     <input id="hide_tray" type="checkbox">
   </div>
+
+  <h2 id="h-index"></h2>
+  <div class="block">
+    <label><span id="l-disks"></span><small id="s-disks"></small></label>
+    <div id="drives"></div>
+  </div>
+  <div class="block">
+    <label for="folders"><span id="l-folders"></span><small id="s-folders"></small></label>
+    <textarea id="folders" spellcheck="false"></textarea>
+  </div>
+  <div class="block">
+    <label for="no_index"><span id="l-noindex"></span><small id="s-noindex"></small></label>
+    <textarea id="no_index" spellcheck="false"></textarea>
+  </div>
+  <div class="block">
+    <label for="exclude"><span id="l-exclude"></span><small id="s-exclude"></small></label>
+    <textarea id="exclude" spellcheck="false"></textarea>
+    <span class="note" id="s-rules"></span>
+  </div>
+
   <div id="msg"></div>
-  <div class="actions"><button id="close" type="button"></button><button id="save" class="primary" type="button"></button></div>
+  <div class="actions">
+    <button id="restart" type="button" hidden></button>
+    <button id="close" type="button"></button>
+    <button id="save" class="primary" type="button"></button>
+  </div>
 </main>
 <script>
 const { invoke } = window.__TAURI__.core;
 const $ = id => document.getElementById(id);
 
 const STR = {
-  en: { title: 'Settings', hotkey: 'Shortcut to open the bar', hotkeyHint: 'Needs Ctrl, Alt or Win, e.g. Alt+Space',
+  en: { title: 'Settings', general: 'General', index: 'What is indexed',
+        hotkey: 'Shortcut to open the bar', hotkeyHint: 'Needs Ctrl, Alt or Win, e.g. Alt+Space',
         record: 'Record', recording: 'Press keys…', language: 'Language', theme: 'Theme',
         languages: { auto: 'Same as Windows', en: 'English', it: 'Italiano' },
         themes: { auto: 'Same as Windows', dark: 'Dark', light: 'Light', midnight: 'Midnight', paper: 'Paper' },
+        autostart: 'Start with Windows',
+        typesearch: 'Type to search in Explorer and on the desktop', typesearchHint: 'Typing letters opens the bar with them',
         updates: 'Check for updates', updatesHint: 'At startup and once a day; nothing installs without your click',
         tray: 'Hide the tray icon', trayHint: 'Open the bar with the shortcut, settings with Ctrl+, in the bar',
-        save: 'Save', close: 'Close', saved: 'Saved', },
-  it: { title: 'Impostazioni', hotkey: 'Scorciatoia per aprire la barra', hotkeyHint: 'Serve Ctrl, Alt o Win, ad esempio Alt+Spazio',
+        disks: 'Disks', disksHint: 'Untick a disk to leave it out of the search',
+        kinds: { ntfs: 'NTFS, read from the MFT', walk: 'walked (not NTFS)', network: 'network, walked' },
+        absent: 'not connected, results kept',
+        folders: 'More folders', foldersHint: 'One path per line, e.g. \\\\nas\\share or D:\\Projects. Walked every 10 minutes',
+        noindex: 'Do not index', noindexHint: 'Left out of the index altogether (saves memory)',
+        exclude: 'Hide from results', excludeHint: 'Indexed, but never shown',
+        rules: 'One rule per line: a name or pattern (node_modules, *.tmp), or a folder path (C:\\Users\\me\\Cache). Case does not matter.',
+        save: 'Save', close: 'Close', saved: 'Saved', restart: 'Restart now',
+        restartNote: 'Saved. Restart lisdir to apply the changes to what is indexed.' },
+  it: { title: 'Impostazioni', general: 'Generali', index: 'Cosa viene indicizzato',
+        hotkey: 'Scorciatoia per aprire la barra', hotkeyHint: 'Serve Ctrl, Alt o Win, ad esempio Alt+Spazio',
         record: 'Registra', recording: 'Premi i tasti…', language: 'Lingua', theme: 'Tema',
         languages: { auto: 'Come Windows', en: 'English', it: 'Italiano' },
         themes: { auto: 'Come Windows', dark: 'Scuro', light: 'Chiaro', midnight: 'Notte', paper: 'Carta' },
+        autostart: 'Avvia con Windows',
+        typesearch: 'Digita per cercare in Esplora risorse e sul desktop', typesearchHint: 'Le lettere digitate aprono la barra',
         updates: 'Controlla gli aggiornamenti', updatesHint: "All'avvio e una volta al giorno; non installa nulla senza un tuo clic",
         tray: "Nascondi l'icona nella barra", trayHint: 'Apri la barra con la scorciatoia, le impostazioni con Ctrl+, nella barra',
-        save: 'Salva', close: 'Chiudi', saved: 'Salvato', },
+        disks: 'Dischi', disksHint: 'Togli la spunta a un disco per escluderlo dalla ricerca',
+        kinds: { ntfs: 'NTFS, letto dalla MFT', walk: 'scansione cartelle (non NTFS)', network: 'rete, scansione cartelle' },
+        absent: 'non collegato, risultati mantenuti',
+        folders: 'Altre cartelle', foldersHint: 'Un percorso per riga, ad esempio \\\\nas\\condivisione o D:\\Progetti. Riscansionate ogni 10 minuti',
+        noindex: 'Non indicizzare', noindexHint: "Lasciato fuori dall'indice (risparmia memoria)",
+        exclude: 'Nascondi dai risultati', excludeHint: 'Indicizzato, ma mai mostrato',
+        rules: 'Una regola per riga: un nome o un modello (node_modules, *.tmp), oppure il percorso di una cartella (C:\\Utenti\\me\\Cache). Maiuscole e minuscole non contano.',
+        save: 'Salva', close: 'Chiudi', saved: 'Salvato', restart: 'Riavvia ora',
+        restartNote: "Salvato. Riavvia lisdir per applicare le modifiche a ciò che viene indicizzato." },
 };
 let S = STR.en, current = null;
 
@@ -81,24 +146,55 @@ function fill(select, values) {
   }));
 }
 
+const lines = text => text.split('\n').map(l => l.trim()).filter(Boolean);
+
+function showDrives(list, off) {
+  $('drives').replaceChildren(...list.map(d => {
+    const row = document.createElement('label');
+    row.className = 'drive';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.dataset.letter = d.letter;
+    box.checked = !off.includes(d.letter);
+    const text = document.createElement('span');
+    const name = d.label ? `${d.letter}: ${d.label}` : `${d.letter}:`;
+    text.textContent = name + ' ';
+    const kind = document.createElement('em');
+    kind.textContent = '· ' + (d.present ? S.kinds[d.kind] : S.absent);
+    text.append(kind);
+    row.append(box, text);
+    return row;
+  }));
+}
+
 function show(c) {
   current = c;
   document.documentElement.dataset.theme = c.theme;
   $('hotkey').value = c.hotkey;
   $('language').value = c.language;
   $('theme').value = c.theme;
+  $('type_search').checked = c.type_search;
   $('check_updates').checked = c.check_updates;
   $('hide_tray').checked = c.hide_tray;
+  $('folders').value = c.folders.join('\n');
+  $('no_index').value = c.no_index.join('\n');
+  $('exclude').value = c.exclude.join('\n');
 }
 
 function labels() {
   document.title = S.title;
-  $('title').textContent = S.title;
-  $('l-hotkey').textContent = S.hotkey; $('s-hotkey').textContent = S.hotkeyHint;
-  $('l-language').textContent = S.language; $('l-theme').textContent = S.theme;
-  $('l-updates').textContent = S.updates; $('s-updates').textContent = S.updatesHint;
-  $('l-tray').textContent = S.tray; $('s-tray').textContent = S.trayHint;
-  $('rec').textContent = S.record; $('save').textContent = S.save; $('close').textContent = S.close;
+  const set = (id, text) => { $(id).textContent = text; };
+  set('title', S.title); set('h-general', S.general); set('h-index', S.index);
+  set('l-hotkey', S.hotkey); set('s-hotkey', S.hotkeyHint);
+  set('l-language', S.language); set('l-theme', S.theme); set('l-autostart', S.autostart);
+  set('l-typesearch', S.typesearch); set('s-typesearch', S.typesearchHint);
+  set('l-updates', S.updates); set('s-updates', S.updatesHint);
+  set('l-tray', S.tray); set('s-tray', S.trayHint);
+  set('l-disks', S.disks); set('s-disks', S.disksHint);
+  set('l-folders', S.folders); set('s-folders', S.foldersHint);
+  set('l-noindex', S.noindex); set('s-noindex', S.noindexHint);
+  set('l-exclude', S.exclude); set('s-exclude', S.excludeHint); set('s-rules', S.rules);
+  set('rec', S.record); set('save', S.save); set('close', S.close); set('restart', S.restart);
   fill($('language'), S.languages);
   fill($('theme'), S.themes);
 }
@@ -146,23 +242,34 @@ $('save').onclick = async () => {
     theme: $('theme').value,
     hide_tray: $('hide_tray').checked,
     check_updates: $('check_updates').checked,
+    type_search: $('type_search').checked,
+    folders: lines($('folders').value),
+    disks_off: [...document.querySelectorAll('#drives input')].filter(b => !b.checked).map(b => b.dataset.letter),
+    no_index: lines($('no_index').value),
+    exclude: lines($('exclude').value),
   };
   try {
-    await invoke('save_settings', { new: next });
+    const restart = await invoke('save_settings', { new: next });
+    await invoke('set_autostart_cmd', { on: $('autostart').checked });
     const langChanged = current.language !== next.language;
-    show(next);
-    say(S.saved, false);
-    if (langChanged) location.reload();
+    show(await invoke('get_settings'));
+    $('restart').hidden = !restart;
+    say(restart ? S.restartNote : S.saved, false);
+    if (langChanged) setTimeout(() => location.reload(), restart ? 1500 : 0);
   } catch (err) {
     say(String(err), true);
   }
 };
+$('restart').onclick = () => invoke('restart_app');
 $('close').onclick = () => invoke('close_window');
 
 (async () => {
   const lang = await invoke('lang');
   S = STR[lang] || STR.en;
   labels();
-  show(await invoke('get_settings'));
+  const c = await invoke('get_settings');
+  show(c);
+  $('autostart').checked = await invoke('get_autostart');
+  showDrives(await invoke('list_drives'), c.disks_off);
 })();
 </script>

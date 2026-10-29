@@ -10,12 +10,27 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-29
+
 ### Added
 - Settings window (tray menu → **Settings…**, `Ctrl+,` in the bar, or `lisdir.exe --settings`): the shortcut that
   opens the bar (any combination with Ctrl, Alt or Win, or a function key; a plain letter or `Space` is refused, and
   so is a shortcut another program already uses), language (Windows, English, Italiano), colour theme (Windows,
   Dark, Light, Midnight, Paper), hiding the tray icon, and turning the daily update check off. They are kept in
-  `%LOCALAPPDATA%\lisdir\settings.txt` (plain `key=value` lines).
+  `%LOCALAPPDATA%\lisdir\settings.txt` (plain `key=value` lines). Start with Windows and Type to search are in the
+  window too, and stay in step with the tray menu (Type to search is now remembered between runs).
+- Choose what is indexed, in the settings window: untick a disk to leave it out; list more folders to index (a
+  network share or any folder, walked every 10 minutes); **Do not index** rules (left out of the index, with
+  everything inside); **Hide from results** rules (still indexed, never shown). A rule is a name or pattern
+  (`node_modules`, `*.tmp`, `~$*`) or a folder path (`C:\Users\me\Cache`); case does not matter. Changes to disks,
+  folders and rules apply after a restart, and the window offers a **Restart now** button.
+- Disks that are not NTFS (USB sticks, exFAT and FAT disks) are now indexed by walking their folders, and listed in
+  the settings window. A stick that was seen before keeps its results while it is unplugged, and is walked again
+  when it comes back. Optical drives and ReFS volumes are still left out.
+
+### Changed
+- The extra network folders of `roots.txt` still work; the same list is now also in the settings window (**More
+  folders**).
 
 ## [0.15.1] - 2026-10-29
 
@@ -172,7 +187,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/enricoottavoita/lisdir/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/enricoottavoita/lisdir/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/enricoottavoita/lisdir/compare/v0.14.3...v0.15.0
 [0.14.3]: https://github.com/enricoottavoita/lisdir/compare/v0.14.2...v0.14.3

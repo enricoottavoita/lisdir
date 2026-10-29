@@ -139,8 +139,10 @@ fn tail(vol: Shared) {
 /// Load every local NTFS volume; each becomes searchable as soon as it is ready.
 fn load_ntfs(vols: Volumes, busy: Arc<AtomicUsize>) {
     busy.fetch_add(1, SeqCst);
+    let settings = crate::settings::Settings::load();
+    settings.apply_rules();
     for l in 'A'..='Z' {
-        if engine::is_network_drive(l) {
+        if engine::is_network_drive(l) || settings.disk_is_off(l) {
             continue; // network drives are the UI's job: it has the user's credentials and drive mappings
         }
         if let Ok(mut v) = engine::open(l) {
@@ -298,6 +300,17 @@ fn quiet(cmd: &str, args: &[&str]) -> bool {
 /// Start the (already installed) elevated helper task. Needs no UAC prompt: running your own task is allowed.
 pub fn start_helper() -> bool {
     quiet("schtasks", &["/Run", "/TN", TASK])
+}
+
+/// `stop_helper`, then wait (up to 5 s) until the pipe is gone, so a new helper can take its place.
+pub fn stop_helper_and_wait() {
+    stop_helper();
+    for _ in 0..25 {
+        if OpenOptions::new().write(true).open(PIPE).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
 
 /// Ask the helper to quit (`Q`), so the task can start it again from a replaced exe. A helper older than 0.14.3

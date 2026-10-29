@@ -5,6 +5,7 @@ mod engine;
 mod icons;
 mod mft;
 mod query;
+mod rules;
 mod service;
 mod settings;
 mod typesearch;
@@ -49,7 +50,12 @@ struct App {
     /// a newer release found by the update check, waiting for the user to accept it
     update: std::sync::Mutex<Option<update::Update>>,
     settings: RwLock<settings::Settings>,
+    /// the settings the index was built with; a difference in disks, folders or rules needs a restart to apply
+    launched: settings::Settings,
 }
+
+/// The two tray check items, so that the settings window can keep them in step.
+static CHECKS: std::sync::OnceLock<(tauri::menu::CheckMenuItem<tauri::Wry>, tauri::menu::CheckMenuItem<tauri::Wry>)> = std::sync::OnceLock::new();
 
 /// Keep a network volume current by periodically re-walking it. It is searchable from the cache
 /// (or empty) right away; a first walk of a big share can take minutes.
@@ -110,7 +116,11 @@ fn start(app: &App) {
         }
     });
     reload_apps(app);
-    for root in engine::network_roots() {
+    let (folders, disks_off) = {
+        let s = app.settings.read().unwrap();
+        (s.folders.clone(), s.disks_off.clone())
+    };
+    for root in engine::walk_roots(&folders, &disks_off) {
         let (v, fresh) = engine::open_walk(&root);
         let v: Shared = Arc::new(RwLock::new(v));
         app.network.write().unwrap().push(v.clone());
@@ -280,10 +290,11 @@ fn get_settings(app: State<App>) -> settings::Settings {
     app.settings.read().unwrap().clone()
 }
 
-/// Apply and save settings from the settings window. Errors are shown there, so they are plain sentences.
+/// Apply and save settings from the settings window. Errors are shown there, so they are plain sentences. The answer
+/// says whether a restart is needed for the indexing choices (disks, folders, rules) to take effect.
 #[tauri::command]
-fn save_settings(new: settings::Settings, app: AppHandle) -> Result<(), String> {
-    new.validate()?;
+fn save_settings(new: settings::Settings, app: AppHandle) -> Result<bool, String> {
+    let new = new.checked()?;
     let state = app.state::<App>();
     let old = state.settings.read().unwrap().clone();
     if new.hotkey != old.hotkey {
@@ -293,15 +304,65 @@ fn save_settings(new: settings::Settings, app: AppHandle) -> Result<(), String> 
     }
     new.save().map_err(|e| format!("cannot save: {e}"))?;
     new.apply_language();
+    typesearch::ENABLED.store(new.type_search, Ordering::SeqCst);
+    if let Some((type_search, _)) = CHECKS.get() {
+        let _ = type_search.set_checked(new.type_search);
+    }
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_visible(!new.hide_tray);
     }
-    *state.settings.write().unwrap() = new.clone();
+    let restart = new.index_differs(&state.launched);
+    *state.settings.write().unwrap() = new;
     // the bar re-reads language and theme
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.eval("location.reload()");
     }
-    Ok(())
+    Ok(restart)
+}
+
+#[tauri::command]
+fn get_autostart() -> bool {
+    reg(&["query", RUN_KEY, "/v", "lisdir"])
+}
+
+#[tauri::command]
+fn set_autostart_cmd(on: bool) {
+    set_autostart(on);
+    if let Some((_, autostart)) = CHECKS.get() {
+        let _ = autostart.set_checked(on);
+    }
+}
+
+#[tauri::command]
+fn list_drives(app: State<App>) -> Vec<engine::Drive> {
+    engine::drives(&app.settings.read().unwrap().disks_off)
+}
+
+/// Restart lisdir (and its helper) so the indexing choices apply. The new copy waits for this one to exit.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    let state = app.state::<App>();
+    let wipe = state.settings.read().unwrap().no_index != state.launched.no_index;
+    service::stop_helper_and_wait();
+    if wipe {
+        engine::wipe_local_caches(); // what a removed or changed "do not index" rule had left out must be found again
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::process::Command::new(exe).arg("--restart-after").arg(std::process::id().to_string()).spawn();
+    }
+    app.exit(0);
+}
+
+/// `--restart-after <pid>`: wait (up to 10 s) for the copy that started us to exit, so its shortcut is free.
+fn wait_for_exit(pid: u32) {
+    use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::{OpenProcess, WaitForSingleObject}};
+    unsafe {
+        let h = OpenProcess(0x0010_0000 /* SYNCHRONIZE */, 0, pid);
+        if !h.is_null() {
+            WaitForSingleObject(h, 10_000);
+            CloseHandle(h);
+        }
+    }
 }
 
 /// Open the settings window (or bring it forward).
@@ -314,7 +375,7 @@ fn open_settings(app: &AppHandle) {
     let title = t("lisdir settings", "Impostazioni di lisdir");
     let built = tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("settings.html".into()))
         .title(title)
-        .inner_size(520.0, 600.0)
+        .inner_size(560.0, 780.0)
         .resizable(false)
         .center()
         .build();
@@ -434,8 +495,14 @@ fn main() {
         Some("--install") => return service::install(),
         _ => {}
     }
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(pid) = args.iter().position(|a| a == "--restart-after").and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok()) {
+        wait_for_exit(pid);
+    }
     update::cleanup();
     let loaded = settings::Settings::load();
+    loaded.apply_rules();
+    typesearch::ENABLED.store(loaded.type_search, Ordering::SeqCst);
     tauri::Builder::default()
         .plugin(
             Shortcuts::new()
@@ -446,7 +513,7 @@ fn main() {
                 })
                 .build(),
         )
-        .manage(App { settings: RwLock::new(loaded.clone()), ..Default::default() })
+        .manage(App { settings: RwLock::new(loaded.clone()), launched: loaded.clone(), ..Default::default() })
         .setup(move |app| {
             // the saved shortcut, or Alt+Space when it is taken by another program
             if app.global_shortcut().register(loaded.hotkey.as_str()).is_err() {
@@ -454,8 +521,9 @@ fn main() {
             }
             start(&app.state::<App>());
             typesearch::start(app.handle().clone());
-            let type_search = CheckMenuItem::with_id(app, "typesearch", t("Type to search in Explorer/Desktop", "Digita per cercare in Esplora risorse/Desktop"), true, true, None::<&str>)?;
+            let type_search = CheckMenuItem::with_id(app, "typesearch", t("Type to search in Explorer/Desktop", "Digita per cercare in Esplora risorse/Desktop"), true, loaded.type_search, None::<&str>)?;
             let autostart = CheckMenuItem::with_id(app, "autostart", t("Start with Windows", "Avvia con Windows"), true, reg(&["query", RUN_KEY, "/v", "lisdir"]), None::<&str>)?;
+            let _ = CHECKS.set((type_search.clone(), autostart.clone()));
             let update_item = MenuItem::with_id(app, "update", t("Check for updates…", "Controlla aggiornamenti…"), true, None::<&str>)?;
             let (handle, item) = (app.handle().clone(), update_item.clone());
             std::thread::spawn(move || loop {
@@ -486,7 +554,14 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, e| match e.id.as_ref() {
                     "open" => toggle(app),
-                    "typesearch" => typesearch::ENABLED.store(type_search.is_checked().unwrap_or(true), Ordering::SeqCst),
+                    "typesearch" => {
+                        let on = type_search.is_checked().unwrap_or(true);
+                        typesearch::ENABLED.store(on, Ordering::SeqCst);
+                        let state = app.state::<App>();
+                        let mut s = state.settings.write().unwrap();
+                        s.type_search = on;
+                        let _ = s.save();
+                    }
                     "autostart" => set_autostart(autostart.is_checked().unwrap_or(false)),
                     "settings" => open_settings(app),
                     "roots" => edit_roots(),
@@ -529,7 +604,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, forget, get_settings, save_settings, settings_window, close_window])
+        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, forget, get_settings, save_settings, settings_window, close_window, get_autostart, set_autostart_cmd, list_drives, restart_app])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

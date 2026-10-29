@@ -1,6 +1,6 @@
 //! NTFS file index: full MFT enumeration (FSCTL_ENUM_USN_DATA), live updates by tailing the USN journal,
 //! an on-disk cache, and fuzzy name search. Needs an elevated process (raw volume handle).
-use crate::{mft, query::{Only, Query}};
+use crate::{mft, query::{Only, Query}, rules};
 use std::{
     collections::HashMap,
     ffi::c_void,
@@ -13,7 +13,7 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_HANDLE_EOF, HANDLE, INVALID_HANDLE_VALUE},
-    Storage::FileSystem::{CreateFileW, GetDriveTypeW, GetLogicalDrives, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING},
+    Storage::FileSystem::{CreateFileW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING},
     System::{
         IO::DeviceIoControl,
         Ioctl::{
@@ -40,11 +40,13 @@ pub struct Entry {
     time: i64,
     /// bytes (0 when unknown); for a folder, the sum of the files below it (see `sum_folders`)
     pub size: u64,
+    /// indexed but kept out of the results by an "exclude" rule (itself or a folder above it)
+    pub hidden: bool,
 }
 
 impl Entry {
     fn new(parent: u64, name: String, is_dir: bool, time: i64) -> Self {
-        Entry { parent, lower: name.to_lowercase(), name, is_dir, time, size: 0 }
+        Entry { parent, lower: name.to_lowercase(), name, is_dir, time, size: 0, hidden: false }
     }
 
     fn with_size(mut self, size: u64) -> Self {
@@ -116,6 +118,20 @@ impl Index {
         old
     }
 
+    /// Keep the entries `keep` says yes to (it may also change them).
+    pub fn retain(&mut self, mut keep: impl FnMut(&u64, &mut Entry) -> bool) {
+        for (f, e) in self.items.iter_mut() {
+            if e.as_mut().is_some_and(|x| !keep(f, x)) {
+                *e = None;
+                self.slot.remove(f);
+            }
+        }
+        self.items.retain(|x| x.1.is_some());
+        for (i, (f, _)) in self.items.iter().enumerate() {
+            self.slot.insert(*f, i as u32);
+        }
+    }
+
     pub fn keys(&self) -> impl Iterator<Item = &u64> {
         self.slot.keys()
     }
@@ -124,6 +140,7 @@ impl Index {
         self.items.iter().filter_map(|(f, e)| e.as_ref().map(|e| (f, e)))
     }
 
+    #[cfg(test)]
     pub fn values(&self) -> impl Iterator<Item = &Entry> {
         self.items.iter().filter_map(|(_, e)| e.as_ref())
     }
@@ -284,6 +301,69 @@ fn fill_meta(h: &Handle, idx: &mut Index) {
     }
 }
 
+const KEEP: u8 = 0;
+const HIDE: u8 = 1;
+const SKIP: u8 = 2;
+
+/// What the rules say about an entry, given what they said about its folder. `path` is the entry's lowercase path
+/// when it is a folder (and there are path rules), else None.
+fn verdict_for(act: &rules::Active, name_lower: &str, path: Option<&str>, inherited: u8) -> u8 {
+    if inherited == SKIP || act.skip.hits(name_lower, path) {
+        SKIP
+    } else if inherited == HIDE || act.hide.hits(name_lower, path) {
+        HIDE
+    } else {
+        KEEP
+    }
+}
+
+/// Apply the "do not index" and "exclude" rules to an index just built or loaded: remove what is not to be indexed
+/// (with everything below it) and flag what is not to be shown.
+pub fn prune(idx: &mut Index, root: &str) {
+    prune_with(idx, root, &rules::active());
+}
+
+fn prune_with(idx: &mut Index, root: &str, act: &rules::Active) {
+    if act.skip.is_empty() && act.hide.is_empty() {
+        return;
+    }
+    let need_path = act.skip.has_paths() || act.hide.has_paths();
+    let mut memo: HashMap<u64, u8> = HashMap::with_capacity(idx.len());
+    let frns: Vec<u64> = idx.keys().copied().collect();
+    for f in frns {
+        if memo.contains_key(&f) {
+            continue;
+        }
+        // climb to the first folder whose verdict is known, then come back down
+        let (mut chain, mut base, mut cur) = (vec![f], KEEP, f);
+        while let Some(parent) = idx.get(&cur).map(|e| e.parent) {
+            if let Some(&v) = memo.get(&parent) {
+                base = v;
+                break;
+            }
+            if !idx.contains_key(&parent) || chain.len() > 4096 {
+                break;
+            }
+            chain.push(parent);
+            cur = parent;
+        }
+        for &c in chain.iter().rev() {
+            let Some(e) = idx.get(&c) else { continue };
+            let path = (need_path && e.is_dir).then(|| full_path(idx, c, root).to_lowercase());
+            base = verdict_for(act, &e.lower, path.as_deref(), base);
+            memo.insert(c, base);
+        }
+    }
+    idx.retain(|f, e| match memo.get(f) {
+        Some(&SKIP) => false,
+        Some(&HIDE) => {
+            e.hidden = true;
+            true
+        }
+        _ => true,
+    });
+}
+
 /// Full enumeration of the volume. The journal position is read first, so changes made while
 /// scanning are replayed afterwards (upserts/deletes are idempotent).
 pub fn scan_volume(letter: char) -> Result<Volume, String> {
@@ -305,6 +385,7 @@ pub fn scan_volume(letter: char) -> Result<Volume, String> {
         }
     }
     fill_meta(&h, &mut idx);
+    prune(&mut idx, &format!("{letter}:"));
     sum_folders(&mut idx);
     // ponytail: no active journal => journal_id 0, no live updates and no cache (always rescanned).
     Ok(Volume { root: format!("{letter}:"), walk: false, idx, journal_id: j.map_or(0, |j| j.UsnJournalID), next_usn: j.map_or(0, |j| j.NextUsn), dirty: true })
@@ -379,11 +460,40 @@ pub fn sum_folders(idx: &mut Index) {
 }
 
 pub fn apply(v: &mut Volume, changes: Vec<Change>, next_usn: i64) {
+    apply_with(v, changes, next_usn, &rules::active());
+}
+
+fn apply_with(v: &mut Volume, changes: Vec<Change>, next_usn: i64, act: &rules::Active) {
     v.dirty |= !changes.is_empty();
+    let ruled = !act.skip.is_empty() || !act.hide.is_empty();
     for c in changes {
         match c {
             Change::Upsert(frn, parent, name, is_dir, time) => {
                 let mut e = Entry::new(parent, name, is_dir, time);
+                if ruled {
+                    // a folder we do not index leaves its children without a parent in the index (the volume's root,
+                    // number 5, is never in it), which is how they are recognised
+                    let parent_state = match v.idx.get(&parent) {
+                        Some(p) if p.hidden => HIDE,
+                        Some(_) => KEEP,
+                        None if !act.skip.is_empty() && parent & 0xFFFF_FFFF_FFFF != 5 => SKIP,
+                        None => KEEP,
+                    };
+                    let path = ((act.skip.has_paths() || act.hide.has_paths()) && is_dir).then(|| {
+                        let base = if v.idx.contains_key(&parent) { full_path(&v.idx, parent, &v.root) } else { v.root.clone() };
+                        format!("{base}\\{}", e.name).to_lowercase()
+                    });
+                    match verdict_for(act, &e.lower, path.as_deref(), parent_state) {
+                        SKIP => {
+                            if let Some(old) = v.idx.remove(&frn) {
+                                add_up(&mut v.idx, old.parent, -(old.size as i64));
+                            }
+                            continue;
+                        }
+                        HIDE => e.hidden = true,
+                        _ => {}
+                    }
+                }
                 // a moved or renamed entry takes its bytes out of the old folders; a folder keeps its total
                 if let Some(old) = v.idx.get(&frn) {
                     let (old_parent, old_size, was_dir) = (old.parent, old.size, old.is_dir);
@@ -597,6 +707,8 @@ pub fn open(letter: char) -> Result<Volume, String> {
         if live.is_some_and(|j| j.UsnJournalID == v.journal_id && v.next_usn >= j.FirstUsn) {
             if let Ok((c, n)) = read_changes(&v) {
                 apply(&mut v, c, n);
+                let root = v.root.clone();
+                prune(&mut v.idx, &root);
                 sum_folders(&mut v.idx); // the cache holds totals too, but recounting is cheap and repairs any drift
                 return Ok(v);
             }
@@ -622,18 +734,106 @@ fn is_remote(letter: char) -> bool {
     unsafe { GetDriveTypeW(p.as_ptr()) == 4 } // DRIVE_REMOTE
 }
 
-/// Mapped network drives plus the paths listed in roots.txt (one per line, `#` comments).
-pub fn network_roots() -> Vec<String> {
+/// A disk lisdir knows about, and how it is indexed.
+#[derive(serde::Serialize)]
+pub struct Drive {
+    pub letter: String,
+    pub label: String,
+    pub fs: String,
+    /// "ntfs" (MFT index by the helper), "walk" (another local file system, walked) or "network" (walked)
+    pub kind: &'static str,
+    /// false for a removable disk that was seen before and is unplugged now (its results are kept)
+    pub present: bool,
+    pub indexed: bool,
+}
+
+/// Volume label and file system name ("NTFS", "exFAT", ...); empty when the drive cannot be read.
+fn volume_info(letter: char) -> (String, String) {
+    let root: Vec<u16> = format!("{letter}:\\").encode_utf16().chain([0]).collect();
+    let (mut label, mut fs) = ([0u16; 261], [0u16; 64]);
+    let ok = unsafe { GetVolumeInformationW(root.as_ptr(), label.as_mut_ptr(), 261, null_mut(), null_mut(), null_mut(), fs.as_mut_ptr(), 64) };
+    let text = |b: &[u16]| String::from_utf16_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]);
+    if ok == 0 { (String::new(), String::new()) } else { (text(&label), text(&fs)) }
+}
+
+/// Drive letters of non-NTFS local disks seen in earlier sessions (walked.txt), so an unplugged stick keeps its results.
+fn remembered() -> Vec<String> {
+    let text = std::fs::read_to_string(data_dir().join("walked.txt")).unwrap_or_default();
+    text.lines().map(|l| l.trim().to_uppercase()).filter(|l| l.len() == 1 && l.chars().all(|c| c.is_ascii_alphabetic())).collect()
+}
+
+fn remember(letter: &str) {
+    if !remembered().iter().any(|l| l == letter) {
+        let _ = std::fs::create_dir_all(data_dir());
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open(data_dir().join("walked.txt")).and_then(|mut f| {
+            use std::io::Write;
+            writeln!(f, "{letter}")
+        });
+    }
+}
+
+/// Every disk to index or not: mapped network drives, local disks (NTFS ones go to the helper, the others are walked),
+/// and removable disks remembered from before. Optical drives and ReFS volumes are left out.
+pub fn drives(disks_off: &[String]) -> Vec<Drive> {
     let mask = unsafe { GetLogicalDrives() };
-    let mut roots: Vec<String> = ('A'..='Z').filter(|&l| mask >> (l as u8 - b'A') & 1 == 1 && is_remote(l)).map(|l| format!("{l}:")).collect();
+    let off = |l: &str| disks_off.iter().any(|d| d.eq_ignore_ascii_case(l));
+    let mut out = vec![];
+    for l in 'A'..='Z' {
+        if mask >> (l as u8 - b'A') & 1 == 0 {
+            continue;
+        }
+        let path: Vec<u16> = format!("{l}:\\").encode_utf16().chain([0]).collect();
+        let (label, fs) = volume_info(l);
+        let kind = match unsafe { GetDriveTypeW(path.as_ptr()) } {
+            4 => "network",
+            2 | 3 if fs == "NTFS" => "ntfs",
+            2 | 3 if !fs.is_empty() && fs != "ReFS" => "walk",
+            _ => continue,
+        };
+        out.push(Drive { letter: l.to_string(), label, fs, kind, present: true, indexed: !off(&l.to_string()) });
+    }
+    for r in remembered() {
+        if !out.iter().any(|d| d.letter == r) {
+            let indexed = !off(&r);
+            out.push(Drive { letter: r, label: String::new(), fs: String::new(), kind: "walk", present: false, indexed });
+        }
+    }
+    out
+}
+
+/// What the UI process walks: network drives and non-NTFS local disks that are switched on, the folders chosen in
+/// the settings, and the paths of the older roots.txt (one per line, `#` comments).
+pub fn walk_roots(folders: &[String], disks_off: &[String]) -> Vec<String> {
+    let mut roots: Vec<String> = vec![];
+    for d in drives(disks_off) {
+        if d.kind == "walk" && d.present {
+            remember(&d.letter);
+        }
+        if d.indexed && matches!(d.kind, "network" | "walk") {
+            roots.push(format!("{}:", d.letter));
+        }
+    }
     let listed = std::fs::read_to_string(data_dir().join("roots.txt")).unwrap_or_default();
-    for l in listed.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
-        let r = l.trim_end_matches('\\').to_string();
-        if !roots.iter().any(|x| x.eq_ignore_ascii_case(&r)) {
+    let from_file = listed.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from);
+    for r in from_file.chain(folders.iter().cloned()) {
+        let r = r.trim_end_matches('\\').to_string();
+        if !r.is_empty() && !roots.iter().any(|x| x.eq_ignore_ascii_case(&r)) {
             roots.push(r);
         }
     }
     roots
+}
+
+/// Delete the caches of the one-letter disks, so that the next start rebuilds them (used after a "do not index" rule
+/// was removed or changed: what it had left out has to be found again).
+pub fn wipe_local_caches() {
+    let Ok(rd) = std::fs::read_dir(data_dir()) else { return };
+    for p in rd.flatten().map(|e| e.path()) {
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if stem.len() == 1 && matches!(p.extension().and_then(|s| s.to_str()), Some("idx" | "log")) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
 }
 
 /// Whether `letter` is a mapped network drive (the NTFS pass skips those).
@@ -670,16 +870,21 @@ impl Walk {
 /// With `stream` (a volume that has no index yet) each folder's entries go straight into that volume, so results
 /// show up while the first walk is still running; the returned `idx` is then empty.
 pub fn walk(root: &str, stream: Option<&RwLock<Volume>>) -> Walk {
+    walk_with(root, stream, &rules::active())
+}
+
+fn walk_with(root: &str, stream: Option<&RwLock<Volume>>, act: &rules::Active) -> Walk {
     let idx = Mutex::new(Index::new());
     let next_id = AtomicU64::new(1);
-    let queue = Mutex::new(vec![(0u64, PathBuf::from(format!("{root}\\")))]);
+    let queue = Mutex::new(vec![(0u64, PathBuf::from(format!("{root}\\")), false)]);
+    let need_path = act.skip.has_paths() || act.hide.has_paths();
     let pending = AtomicUsize::new(1); // directories queued or being read
     let (dirs, failed) = (AtomicUsize::new(0), AtomicUsize::new(0));
     std::thread::scope(|s| {
         for _ in 0..16 {
             s.spawn(|| loop {
                 let job = queue.lock().unwrap().pop();
-                let Some((parent, dir)) = job else {
+                let Some((parent, dir, parent_hidden)) = job else {
                     if pending.load(SeqCst) == 0 {
                         return;
                     }
@@ -692,6 +897,12 @@ pub fn walk(root: &str, stream: Option<&RwLock<Volume>>) -> Walk {
                     Ok(rd) => {
                         for e in rd.flatten() {
                             let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+                            let name = e.file_name().to_string_lossy().into_owned();
+                            let path = (need_path && is_dir).then(|| e.path().to_string_lossy().to_lowercase());
+                            let verdict = verdict_for(act, &name.to_lowercase(), path.as_deref(), if parent_hidden { HIDE } else { KEEP });
+                            if verdict == SKIP {
+                                continue; // not indexed, and not entered
+                            }
                             // the listing already carries the modified time, so this costs no extra round trip
                             let meta = e.metadata().ok();
                             let time = meta.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
@@ -699,9 +910,11 @@ pub fn walk(root: &str, stream: Option<&RwLock<Volume>>) -> Walk {
                             let id = next_id.fetch_add(1, SeqCst);
                             if is_dir {
                                 pending.fetch_add(1, SeqCst);
-                                queue.lock().unwrap().push((id, e.path()));
+                                queue.lock().unwrap().push((id, e.path(), verdict == HIDE));
                             }
-                            found.push((id, Entry::new(parent, e.file_name().to_string_lossy().into_owned(), is_dir, time).with_size(size)));
+                            let mut entry = Entry::new(parent, name, is_dir, time).with_size(size);
+                            entry.hidden = verdict == HIDE;
+                            found.push((id, entry));
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
@@ -787,6 +1000,9 @@ fn in_folder(idx: &Index, mut parent: u64, word: &str) -> bool {
 
 /// Score of an entry for a query, or None if it does not qualify. Cheap checks first.
 fn matches(q: &Query, idx: &Index, e: &Entry) -> Option<f32> {
+    if e.hidden {
+        return None;
+    }
     match q.only {
         Some(Only::Files) if e.is_dir => return None,
         Some(Only::Folders) if !e.is_dir => return None,
@@ -1125,6 +1341,109 @@ mod tests {
         assert_eq!(i[&(n / 2)].size, 9);
         i.insert(3, Entry::new(0, "again".into(), false, 0)); // a removed key can come back
         assert!(i.contains_key(&3) && i.keys().count() == n as usize / 2 + 1);
+    }
+
+    fn rules(skip: &[&str], hide: &[&str]) -> rules::Active {
+        rules::Active { skip: rules::Rules::parse(skip), hide: rules::Rules::parse(hide) }
+    }
+
+    /// C:\ with Users\me\{src\{main.rs, node_modules\{dep.js}}, Cache\x.tmp, notes.txt}; frn = parent*10 + n
+    fn rule_tree() -> Index {
+        let mut i = Index::new();
+        let mut add = |frn, parent, name: &str, dir| i.insert(frn, Entry::new(parent, name.into(), dir, NOW).with_size(100));
+        add(10, 5, "Users", true);
+        add(11, 10, "me", true);
+        add(12, 11, "src", true);
+        add(13, 12, "main.rs", false);
+        add(14, 12, "node_modules", true);
+        add(15, 14, "dep.js", false);
+        add(16, 11, "Cache", true);
+        add(17, 16, "x.tmp", false);
+        add(18, 11, "notes.txt", false);
+        i
+    }
+
+    #[test]
+    fn do_not_index_rules_remove_whole_subtrees() {
+        let mut i = rule_tree();
+        prune_with(&mut i, "C:", &rules(&["node_modules", "*.tmp", r"C:\Users\me\Cache"], &[]));
+        let left: Vec<u64> = (10..=18).filter(|f| i.contains_key(f)).collect();
+        assert_eq!(left, [10, 11, 12, 13, 18]); // dep.js went with its folder, x.tmp and Cache by path
+        assert_eq!(i.len(), 5);
+        assert_eq!(search(&i, &q("dep"), 5).len(), 0);
+    }
+
+    #[test]
+    fn exclude_rules_hide_but_keep() {
+        let mut i = rule_tree();
+        prune_with(&mut i, "C:", &rules(&[], &["node_modules", r"c:\users\me\cache"]));
+        assert_eq!(i.len(), 9); // everything is still indexed
+        assert!(i[&14].hidden && i[&15].hidden && i[&16].hidden && i[&17].hidden && !i[&13].hidden);
+        assert!(search(&i, &q("dep"), 5).is_empty() && search(&i, &q("x.tmp"), 5).is_empty());
+        assert_eq!(search(&i, &q("main"), 5).len(), 1);
+        prune_with(&mut i, "C:", &rules(&[], &[])); // no rules: nothing changes (hiding is recomputed on load)
+        assert!(i[&14].hidden);
+    }
+
+    #[test]
+    fn live_changes_follow_the_rules() {
+        let act = rules(&["node_modules"], &["secret*"]);
+        let mut v = vol(&[rec(10, 5, 0x10, 0, "Docs")].concat());
+        apply_with(&mut v, vec![
+            Change::Upsert(20, 10, "node_modules".into(), true, NOW),   // skipped folder
+            Change::Upsert(21, 20, "a.js".into(), false, NOW),          // inside it: its parent is not in the index
+            Change::Upsert(22, 10, "secret plans".into(), true, NOW),   // hidden folder
+            Change::Upsert(23, 22, "plan.txt".into(), false, NOW),      // inherits the hiding
+            Change::Upsert(24, 10, "visible.txt".into(), false, NOW),
+            Change::Upsert(25, 5, "top.txt".into(), false, NOW),        // directly in the root: kept
+        ], 150, &act);
+        assert!(!v.idx.contains_key(&20) && !v.idx.contains_key(&21));
+        assert!(v.idx[&22].hidden && v.idx[&23].hidden && !v.idx[&24].hidden && v.idx.contains_key(&25));
+        // renaming something into a skipped name removes it
+        apply_with(&mut v, vec![Change::Upsert(24, 10, "node_modules".into(), true, NOW)], 160, &act);
+        assert!(!v.idx.contains_key(&24));
+    }
+
+    #[test]
+    fn walk_skips_and_hides() {
+        let root = std::env::temp_dir().join("lisdir_rules_walk");
+        let _ = std::fs::remove_dir_all(&root);
+        for d in ["keep", "node_modules/inner", "private/deep"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        for f in ["keep/a.txt", "node_modules/inner/b.js", "private/deep/c.txt", "d.tmp"] {
+            std::fs::write(root.join(f), b"x").unwrap();
+        }
+        let r = root.to_str().unwrap();
+        let w = walk_with(r, None, &rules(&["node_modules", "*.tmp"], &["private"]));
+        let names: Vec<&str> = w.idx.values().map(|e| e.name.as_str()).collect();
+        assert!(!names.contains(&"node_modules") && !names.contains(&"b.js") && !names.contains(&"d.tmp"));
+        let hidden: Vec<&str> = w.idx.values().filter(|e| e.hidden).map(|e| e.name.as_str()).collect();
+        assert_eq!(hidden.len(), 3); // private, deep, c.txt
+        assert!(names.contains(&"a.txt") && names.contains(&"c.txt"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn index_retain_keeps_lookups_working() {
+        let mut i = rule_tree();
+        i.retain(|f, e| {
+            e.size = 1;
+            f % 2 == 0
+        });
+        assert_eq!(i.len(), 5);
+        assert!(i.get(&12).is_some_and(|e| e.size == 1) && i.get(&13).is_none());
+        assert_eq!(i.iter().count(), 5);
+    }
+
+    #[test]
+    fn drives_lists_the_system_disk() {
+        let all = drives(&[]);
+        let c = all.iter().find(|d| d.letter == "C").expect("C: is listed");
+        assert!(c.present && c.indexed && !c.fs.is_empty());
+        let off = drives(&["C".into()]);
+        assert!(!off.iter().find(|d| d.letter == "C").unwrap().indexed);
+        assert!(walk_roots(&[r"X:\Extra\".into()], &[]).iter().any(|r| r == r"X:\Extra"));
     }
 
     #[test]
