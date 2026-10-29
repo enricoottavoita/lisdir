@@ -30,9 +30,10 @@ unelevated, and every feature ships with a test or a measured check.
 
 ## 0.16 — settings and control
 - [x] Dates in words: `date:3d`, `date:monday`, `date:lastweek`, and the Italian forms (`date:ieri`, `date:lunedì`)
-- [ ] Settings window: configurable hotkey (including double-tap `Ctrl`; reject plain character keys such as
-      `Space` alone), language override, theme presets, hide the tray icon
-- [ ] Option to turn off the daily update check
+- [x] Settings window: configurable hotkey (plain character keys such as `Space` alone are refused), language
+      override, theme presets, hide the tray icon, option to turn off the daily update check
+- [ ] Double-tap `Ctrl` as a shortcut (needs the low-level keyboard hook)
+- [ ] Settings window: also Start with Windows and Type to search (today only in the tray menu)
 - [ ] Choose which folders are indexed
 - [ ] **Exclude from results** (still indexed, hidden from results) and **do not index** rules
       (`node_modules`, `.git`, caches)
@@ -52,7 +53,7 @@ unelevated, and every feature ships with a test or a measured check.
 - [ ] **"Why can't I find this?"** — give a path or file name and explain: not on an indexed disk, excluded,
       unsupported file system, helper not running, network folder not yet walked, and how to fix it
 - [ ] About page: item counts, per-volume status, last walk times, and a small built-in speed test
-- [ ] Tell the user when settings cannot be saved
+- [ ] Tell the user when settings cannot be saved (the settings window shows the error; other places do not yet)
 - [ ] Measure the memory used by the UI and the helper with 1.6 million entries and state it in the README
 
 ## Later

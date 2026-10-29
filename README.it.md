@@ -92,6 +92,8 @@ Esegui comunque*.
 Altre cartelle di rete si aggiungono in `%LOCALAPPDATA%\lisdir\roots.txt`, un percorso per riga (dal menu
 dell'icona: **Cartelle di rete…**).
 
+**Impostazioni** (menu dell'icona → Impostazioni…, oppure `Ctrl+,` nella barra): la scorciatoia che apre la barra, la lingua, il tema dei colori, il nascondere l'icona e il controllo giornaliero degli aggiornamenti. Sono salvate in `%LOCALAPPDATA%\lisdir\settings.txt`.
+
 **Aggiornamenti.** lisdir controlla le release su GitHub pochi secondi dopo l'avvio e poi ogni giorno; se ce n'è una
 nuova, il menu dell'icona propone «Aggiorna a X.Y.Z…» (oppure scegli «Controlla aggiornamenti…» quando vuoi). Scarica
 l'installer, ne verifica lo SHA-256 con il file `SHA256SUMS.txt` pubblicato e lo avvia; Windows chiede il permesso e
@@ -125,7 +127,7 @@ cargo build --release
 - Non si possono ancora ordinare i risultati per dimensione o data, e `size:` non trova le cartelle.
 - L'anteprima legge il testo come UTF-8: le lettere accentate dei vecchi file ANSI appaiono come `�` e un file UTF-16 mostra la sua icona.
 - Il menu azioni agisce su un risultato alla volta (più file insieme arriveranno con la finestra di ricerca).
-- Non ancora presenti: finestra delle impostazioni con scorciatoia configurabile,
+- Non ancora presenti: scelta delle cartelle indicizzate, regole di esclusione,
   integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
 
 ## Licenza

@@ -6,6 +6,7 @@ mod icons;
 mod mft;
 mod query;
 mod service;
+mod settings;
 mod typesearch;
 mod update;
 mod usage;
@@ -21,7 +22,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, State, WebviewWindow, WindowEvent,
 };
-use tauri_plugin_global_shortcut::{Builder as Shortcuts, ShortcutState};
+use tauri_plugin_global_shortcut::{Builder as Shortcuts, GlobalShortcutExt, ShortcutState};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -47,6 +48,7 @@ struct App {
     focused: AtomicBool,
     /// a newer release found by the update check, waiting for the user to accept it
     update: std::sync::Mutex<Option<update::Update>>,
+    settings: RwLock<settings::Settings>,
 }
 
 /// Keep a network volume current by periodically re-walking it. It is searchable from the cache
@@ -256,9 +258,11 @@ fn version() -> &'static str {
 
 /// Italian on an Italian Windows UI, else English. LISDIR_LANG=it|en overrides (handy for testing).
 fn italian() -> bool {
-    match std::env::var("LISDIR_LANG").as_deref() {
-        Ok(l) => l == "it",
-        Err(_) => (unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() }) & 0x3ff == 0x10, // LANG_ITALIAN
+    match (settings::LANGUAGE.load(Ordering::SeqCst), std::env::var("LISDIR_LANG").as_deref()) {
+        (1, _) => false,
+        (2, _) => true,
+        (_, Ok(l)) => l == "it",
+        _ => (unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() }) & 0x3ff == 0x10, // LANG_ITALIAN
     }
 }
 
@@ -269,6 +273,64 @@ fn t(en: &'static str, it: &'static str) -> &'static str {
 #[tauri::command]
 fn lang() -> &'static str {
     t("en", "it")
+}
+
+#[tauri::command]
+fn get_settings(app: State<App>) -> settings::Settings {
+    app.settings.read().unwrap().clone()
+}
+
+/// Apply and save settings from the settings window. Errors are shown there, so they are plain sentences.
+#[tauri::command]
+fn save_settings(new: settings::Settings, app: AppHandle) -> Result<(), String> {
+    new.validate()?;
+    let state = app.state::<App>();
+    let old = state.settings.read().unwrap().clone();
+    if new.hotkey != old.hotkey {
+        // register the new one first, so a shortcut that is taken by another program leaves the old one working
+        app.global_shortcut().register(new.hotkey.as_str()).map_err(|e| format!("shortcut: {e}"))?;
+        let _ = app.global_shortcut().unregister(old.hotkey.as_str());
+    }
+    new.save().map_err(|e| format!("cannot save: {e}"))?;
+    new.apply_language();
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_visible(!new.hide_tray);
+    }
+    *state.settings.write().unwrap() = new.clone();
+    // the bar re-reads language and theme
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.eval("location.reload()");
+    }
+    Ok(())
+}
+
+/// Open the settings window (or bring it forward).
+fn open_settings(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let title = t("lisdir settings", "Impostazioni di lisdir");
+    let built = tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("settings.html".into()))
+        .title(title)
+        .inner_size(520.0, 600.0)
+        .resizable(false)
+        .center()
+        .build();
+    if let Ok(w) = built {
+        let _ = w.set_focus();
+    }
+}
+
+#[tauri::command]
+fn close_window(w: WebviewWindow) {
+    let _ = w.close();
+}
+
+#[tauri::command]
+fn settings_window(app: AppHandle) {
+    open_settings(&app);
 }
 
 #[tauri::command]
@@ -373,11 +435,10 @@ fn main() {
         _ => {}
     }
     update::cleanup();
+    let loaded = settings::Settings::load();
     tauri::Builder::default()
         .plugin(
             Shortcuts::new()
-                .with_shortcuts(["alt+space"])
-                .unwrap()
                 .with_handler(|app, _, e| {
                     if e.state() == ShortcutState::Pressed {
                         toggle(app)
@@ -385,8 +446,12 @@ fn main() {
                 })
                 .build(),
         )
-        .manage(App::default())
-        .setup(|app| {
+        .manage(App { settings: RwLock::new(loaded.clone()), ..Default::default() })
+        .setup(move |app| {
+            // the saved shortcut, or Alt+Space when it is taken by another program
+            if app.global_shortcut().register(loaded.hotkey.as_str()).is_err() {
+                let _ = app.global_shortcut().register("alt+space");
+            }
             start(&app.state::<App>());
             typesearch::start(app.handle().clone());
             let type_search = CheckMenuItem::with_id(app, "typesearch", t("Type to search in Explorer/Desktop", "Digita per cercare in Esplora risorse/Desktop"), true, true, None::<&str>)?;
@@ -395,7 +460,9 @@ fn main() {
             let (handle, item) = (app.handle().clone(), update_item.clone());
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(20)); // let startup settle first
-                check_update(&handle, &item, false);
+                if handle.state::<App>().settings.read().unwrap().check_updates {
+                    check_update(&handle, &item, false);
+                }
                 std::thread::sleep(std::time::Duration::from_secs(24 * 3600));
             });
             let menu = Menu::with_items(
@@ -405,13 +472,14 @@ fn main() {
                     &MenuItem::with_id(app, "open", t("Open (Alt+Space)", "Apri (Alt+Spazio)"), true, None::<&str>)?,
                     &type_search,
                     &autostart,
+                    &MenuItem::with_id(app, "settings", t("Settings…", "Impostazioni…"), true, None::<&str>)?,
                     &MenuItem::with_id(app, "roots", t("Network folders…", "Cartelle di rete…"), true, None::<&str>)?,
                     &update_item,
                     &MenuItem::with_id(app, "install", t("Install index service (admin)…", "Installa servizio di indicizzazione (admin)…"), true, None::<&str>)?,
                     &MenuItem::with_id(app, "quit", t("Quit", "Esci"), true, None::<&str>)?,
                 ],
             )?;
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip(format!("lisdir {VERSION}"))
                 .menu(&menu)
@@ -420,6 +488,7 @@ fn main() {
                     "open" => toggle(app),
                     "typesearch" => typesearch::ENABLED.store(type_search.is_checked().unwrap_or(true), Ordering::SeqCst),
                     "autostart" => set_autostart(autostart.is_checked().unwrap_or(false)),
+                    "settings" => open_settings(app),
                     "roots" => edit_roots(),
                     "update" => {
                         let (app, item) = (app.clone(), update_item.clone());
@@ -437,9 +506,20 @@ fn main() {
                     }
                 })
                 .build(app)?;
+            if std::env::args().any(|a| a == "--settings") {
+                open_settings(app.handle()); // `lisdir.exe --settings`
+            }
+            if loaded.hide_tray {
+                if let Some(tray) = app.tray_by_id("main") {
+                    let _ = tray.set_visible(false);
+                }
+            }
             Ok(())
         })
         .on_window_event(|w, e| {
+            if w.label() != "main" {
+                return; // only the search bar hides itself when it loses focus
+            }
             let app = w.state::<App>();
             match e {
                 WindowEvent::Focused(true) => app.focused.store(true, Ordering::SeqCst),
@@ -449,7 +529,7 @@ fn main() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, forget])
+        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, forget, get_settings, save_settings, settings_window, close_window])
         .run(tauri::generate_context!())
         .expect("tauri");
 }

@@ -95,6 +95,7 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
 | `src-tauri/src/icons.rs` | Shell file-type icons and preview thumbnails rendered to PNG |
 | `src-tauri/src/actions.rs` | The action menu: files on the clipboard as Explorer puts them, open with, terminal, properties; text for the preview |
+| `src-tauri/src/settings.rs` | The settings file: shortcut, language, theme, tray icon, update check |
 | `src-tauri/src/update.rs` | Update check against the GitHub releases; downloads and verifies the installer, or swaps in the portable exe |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
 | `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
@@ -126,7 +127,10 @@ that is signing in; installing with a different admin account's credentials is n
 
 The executables are not code-signed yet, so SmartScreen may warn: *More info → Run anyway*.
 
-Tray menu options: type-to-search on/off, start with Windows, edit network folders, check for updates, install the service.
+Tray menu options: settings, type-to-search on/off, start with Windows, edit network folders, check for updates, install the service.
+
+**Settings** (tray menu → Settings…, or `Ctrl+,` in the bar): the shortcut that opens the bar, language, colour theme,
+hiding the tray icon, and the daily update check. They are saved in `%LOCALAPPDATA%\lisdir\settings.txt`.
 
 Extra network folders go in `%LOCALAPPDATA%\lisdir\roots.txt`, one path per line.
 
@@ -158,7 +162,7 @@ does all of this in CI and publishes a GitHub release.
 - There is no way yet to sort results by size or date, and `size:` does not match folders.
 - The text preview reads files as UTF-8: accented letters in older ANSI files show as `�`, and a UTF-16 file shows its icon.
 - The action menu works on one result at a time (several at once comes with the search window).
-- Not yet implemented: a settings window with a configurable hotkey, Open/Save
+- Not yet implemented: choosing which folders are indexed, exclude rules, Open/Save
   dialog integration, content search.
   The plan is in [TODO.md](TODO.md).
 

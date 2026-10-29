@@ -10,6 +10,13 @@ when releasing.
 
 ## [Unreleased]
 
+### Added
+- Settings window (tray menu → **Settings…**, `Ctrl+,` in the bar, or `lisdir.exe --settings`): the shortcut that
+  opens the bar (any combination with Ctrl, Alt or Win, or a function key; a plain letter or `Space` is refused, and
+  so is a shortcut another program already uses), language (Windows, English, Italiano), colour theme (Windows,
+  Dark, Light, Midnight, Paper), hiding the tray icon, and turning the daily update check off. They are kept in
+  `%LOCALAPPDATA%\lisdir\settings.txt` (plain `key=value` lines).
+
 ## [0.15.1] - 2026-10-29
 
 ### Added

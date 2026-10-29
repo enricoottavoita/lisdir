@@ -1,0 +1,7 @@
+/* Colour themes, shared by the search bar and the settings window. "auto" follows Windows (dark by default). */
+:root { --bg:#1f2024; --fg:#e8e8ea; --dim:#8b8d94; --sel:#34363d; --line:#2e3036; --hl:#7aa7ff; }
+@media (prefers-color-scheme: light) { :root { --bg:#fafafa; --fg:#1d1d1f; --dim:#6b6e76; --sel:#e6e8ee; --line:#dcdde2; --hl:#1a56db; } }
+:root[data-theme=dark] { --bg:#1f2024; --fg:#e8e8ea; --dim:#8b8d94; --sel:#34363d; --line:#2e3036; --hl:#7aa7ff; }
+:root[data-theme=light] { --bg:#fafafa; --fg:#1d1d1f; --dim:#6b6e76; --sel:#e6e8ee; --line:#dcdde2; --hl:#1a56db; }
+:root[data-theme=midnight] { --bg:#0f1626; --fg:#dbe4ff; --dim:#7d8bb0; --sel:#1c2a4a; --line:#1b2640; --hl:#6fb1ff; }
+:root[data-theme=paper] { --bg:#f6f0e4; --fg:#2b2418; --dim:#7d705a; --sel:#e9dfc8; --line:#ddd2b8; --hl:#a8480a; }

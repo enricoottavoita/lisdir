@@ -1,9 +1,8 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>lisdir</title>
+<link rel="stylesheet" href="theme.css">
 <style>
-  :root { --bg:#1f2024; --fg:#e8e8ea; --dim:#8b8d94; --sel:#34363d; --line:#2e3036; --hl:#7aa7ff; }
-  @media (prefers-color-scheme: light) { :root { --bg:#fafafa; --fg:#1d1d1f; --dim:#6b6e76; --sel:#e6e8ee; --line:#dcdde2; --hl:#1a56db; } }
   * { box-sizing:border-box }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:15px "Segoe UI",sans-serif; overflow:hidden }
   body { display:flex; flex-direction:column }
@@ -230,6 +229,7 @@ async function poll() {
 }
 
 invoke('version').then(v => document.getElementById('ver').textContent = 'v' + v);
+invoke('get_settings').then(c => document.documentElement.dataset.theme = c.theme);
 q.oninput = () => { menu = -1; run(); };
 q.onkeydown = e => {
   const k = e.key, n = menuActs().length;
@@ -241,6 +241,7 @@ q.onkeydown = e => {
   else if (k === 'ArrowUp') sel = Math.max(sel - 1, 0);
   else if (k === 'Escape') return invoke('hide');
   else if (e.altKey && e.code === 'KeyP') { e.preventDefault(); return setPane(!pvOn); }
+  else if (e.ctrlKey && e.code === 'Comma') { e.preventDefault(); invoke('settings_window'); return invoke('hide'); }
   else if (e.key === 'Delete' && !q.value.trim()) { // forget a recent item, or all of them with Shift
     const h = hits[sel];
     if (h) invoke('forget', { path: e.shiftKey ? null : h.path }).then(run);
