@@ -20,7 +20,7 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   sticks, exFAT, FAT) are indexed by a parallel directory walk and refreshed every 10 minutes. A stick keeps its
   results while unplugged. On the very first walk, results appear while it is still running.
 - **Type to search.** With an Explorer folder or the desktop focused, typing letters opens the bar with those
-  letters already entered (toggle it in the tray menu).
+  letters already entered (switch it off in the tray menu or the settings).
 - **Fuzzy matching.** `rdme` finds `README.md`; word starts and consecutive letters score higher. Several words
   match in any order, and the matched letters are highlighted.
 - **Search syntax.** Narrow with `ext:pdf`, `date:week`, `size:>1gb`, `-draft`, `"exact phrase"`, `docs\ report`; see below.
@@ -31,17 +31,21 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   list is refreshed when the bar opens, so new installs show up without a restart.
 - **File-type icons and sizes.** Results show the same icons as Explorer, and the size at the right: for a folder, the
   total of the files inside it, kept current as they change.
-- **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes.
+- **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes, `Ctrl+,` opens the settings.
 - **Actions on a result.** `→`, `Ctrl+O` or a right click opens a menu: copy or cut the file (`Ctrl+C` / `Ctrl+X`,
   then paste it in Explorer), copy its path (`Ctrl+Shift+C`), open with, open a terminal there (`Ctrl+T`),
   properties (`Alt+Enter`). The shortcuts also work with the menu closed.
 - **Preview and pins.** `Alt+P` shows a preview pane: the start of a text file, or a thumbnail. `Ctrl+P` pins a
   result so it is always listed first.
+- **Settings.** The shortcut that opens the bar, language, colour theme (Windows, Dark, Light, Midnight, Paper),
+  start with Windows, and what is indexed: which disks, extra folders (with a folder chooser), and rules for what to
+  leave out of the index or hide from the results.
 - **Updates.** The tray menu offers a new version when one is published and installs it after you click, checking
-  its SHA-256 first. This check is the only internet request lisdir makes.
+  its SHA-256 first (a portable copy updates itself in place). This check is the only internet request lisdir
+  makes, and it can be turned off in the settings.
 - **No admin UI.** The bar runs as a normal user; only a small background helper is elevated.
-- **English and Italian.** The language follows your Windows display language (set `LISDIR_LANG=it` or `en` to
-  override). The installer is translated too.
+- **English and Italian.** The language follows your Windows display language, or choose it in the settings (for
+  tests, `LISDIR_LANG=it` or `en` also works). The installer is translated too.
 
 ## Search syntax
 
@@ -102,6 +106,8 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
 | `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
 | `ui/index.html` | The search bar (plain HTML/JS, no build step) |
+| `ui/settings.html` | The settings window |
+| `ui/theme.css` | The colour themes, shared by the bar and the settings window |
 
 ## Build
 
@@ -131,11 +137,14 @@ The executables are not code-signed yet, so SmartScreen may warn: *More info →
 
 Tray menu options: settings, type-to-search on/off, start with Windows, edit network folders, check for updates, install the service.
 
-**Settings** (tray menu → Settings…, or `Ctrl+,` in the bar): the shortcut that opens the bar, language, colour theme,
-hiding the tray icon, the daily update check, start with Windows, type to search, and what is indexed (below). They are saved in `%LOCALAPPDATA%\lisdir\settings.txt`.
+**Settings** (tray menu → Settings…, `Ctrl+,` in the bar, or `lisdir.exe --settings`): the shortcut that opens the
+bar (it needs Ctrl, Alt or Win, or is a function key; one another program already uses is refused), language, colour
+theme, hiding the tray icon, the daily update check, start with Windows, type to search, and what is indexed
+(below). They are saved in `%LOCALAPPDATA%\lisdir\settings.txt`, plain `key=value` lines.
 
 **What is indexed.** In the settings window you can untick a disk, add more folders to walk (the **Add folder…**
-button opens the Windows folder chooser; or type one path per line, for example `\\nas\share`; the older `%LOCALAPPDATA%\lisdir\roots.txt` still works), and write rules:
+button opens the Windows folder chooser; or type one path per line, for example `\\nas\share`; the older
+`%LOCALAPPDATA%\lisdir\roots.txt` still works), and write rules:
 
 | Rule | Effect |
 |---|---|
@@ -149,7 +158,8 @@ window has a **Restart now** button. Removing or changing a do-not-index rule re
 **Updates.** lisdir checks the GitHub releases a few seconds after it starts and then daily; when a newer one
 exists the tray menu offers "Update to X.Y.Z…" (or choose "Check for updates…" at any time). It downloads the
 installer, verifies its SHA-256 against the published `SHA256SUMS.txt`, and starts it; Windows asks for
-permission, and lisdir reopens afterwards. Nothing is installed without your click. A portable copy stays
+permission, and lisdir reopens afterwards. Nothing is installed without your click, and you can turn the daily
+check off in the settings. A portable copy stays
 portable: it downloads the new portable exe instead, verifies it the same way, puts it in place of the old file and
 restarts (no permission prompt; the folder must be writable).
 

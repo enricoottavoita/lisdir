@@ -27,16 +27,14 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Folder sizes (sum of their files, kept current); the portable exe updates itself in place (0.14.3)
 - [x] Action menu with copy / cut / copy path / open with / terminal / properties; preview pane (`Alt+P`);
       pinned results (`Ctrl+P`) (0.15)
-
-## 0.16 — settings and control
 - [x] Dates in words: `date:3d`, `date:monday`, `date:lastweek`, and the Italian forms (`date:ieri`, `date:lunedì`)
-- [x] Settings window: configurable hotkey (plain character keys such as `Space` alone are refused), language
-      override, theme presets, hide the tray icon, option to turn off the daily update check
-- [x] Settings window: also Start with Windows and Type to search
-- [x] Choose which disks and extra folders are indexed
-- [x] **Hide from results** (still indexed) and **do not index** rules (`node_modules`, `.git`, caches)
-- [x] Index non-NTFS local disks (USB sticks, exFAT/FAT) with the directory walker; results are kept while the
-      drive is unplugged
+      (0.15.1)
+- [x] Settings window: shortcut (plain character keys such as `Space` alone are refused), language, themes, tray
+      icon, daily update check, Start with Windows, Type to search (0.16)
+- [x] Choose which disks and extra folders are indexed (with a folder chooser, 0.16.2); **do not index** and
+      **hide from results** rules (`node_modules`, `.git`, caches) (0.16)
+- [x] Index non-NTFS local disks (USB sticks, exFAT/FAT) by walking them; results are kept while the drive is
+      unplugged (0.16)
 
 ## 0.17 — search window
 - [ ] Persistent search window that stays open to compare files

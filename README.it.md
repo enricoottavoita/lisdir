@@ -10,15 +10,17 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 ## Funzioni
 
 - **Ricerca istantanea su milioni di file.** I dischi NTFS locali sono indicizzati leggendo direttamente la MFT,
-  senza scorrere le cartelle, molto più veloce di una scansione delle cartelle. Misurato su 1,6 milioni di voci (due dischi): una ricerca di
-  testo richiede circa 35–60 ms; i filtri come `date:` e `size:` circa 10–15 ms.
+  senza scorrere le cartelle, molto più veloce di una scansione delle cartelle. Misurato su 1,6 milioni di voci
+  (due dischi): una ricerca di testo richiede circa 35–60 ms; i filtri come `date:` e `size:` circa 10–15 ms.
 - **Sempre aggiornato.** L'indice segue il journal USN di NTFS (controllato ogni secondo): file creati, rinominati,
-  spostati o eliminati compaiono entro un paio di secondi. L'indice è salvato su disco, quindi a ogni riavvio
-  recupera solo ciò che è cambiato.
-- **Cartelle di rete.** Unità mappate e percorsi UNC (condivisioni SMB) sono indicizzati con una scansione
-  parallela e aggiornati ogni 10 minuti.
+  spostati o eliminati compaiono entro un paio di secondi, e così le modifiche (data e dimensione si aggiornano alla
+  chiusura del file). L'indice è salvato su disco, quindi a ogni riavvio recupera solo ciò che è cambiato; nel frattempo
+  le modifiche vengono aggiunte a un piccolo registro, senza riscrivere tutta la cache.
+- **Cartelle di rete e altri dischi.** Unità mappate, percorsi UNC (condivisioni SMB) e dischi locali non NTFS
+  (chiavette USB, exFAT, FAT) sono indicizzati con una scansione parallela e aggiornati ogni 10 minuti. Una chiavetta
+  mantiene i suoi risultati mentre è scollegata. Alla primissima scansione i risultati compaiono mentre è in corso.
 - **Digita per cercare.** Con una cartella di Esplora risorse o il Desktop in primo piano, scrivere delle lettere
-  apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona).
+  apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona o dalle impostazioni).
 - **Ricerca approssimata.** `rdme` trova `README.md`; inizi di parola e lettere consecutive
   valgono di più. Più parole si trovano in qualsiasi ordine e le lettere trovate sono evidenziate.
 - **Sintassi di ricerca.** Restringi con `ext:pdf`, `date:week`, `size:>1gb`, `-bozza`, `"frase esatta"`, `docs\ relazione`: vedi sotto.
@@ -29,17 +31,21 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 - **Icone dei file e dimensioni.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto,
   documenti e archivi si distinguono subito, e a destra la dimensione: per una cartella, il totale dei file che
   contiene, aggiornato quando cambiano.
-- **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude.
+- **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude, `Ctrl+,` apre le impostazioni.
 - **Azioni su un risultato.** `→`, `Ctrl+O` o il clic destro aprono un menu: copia o taglia il file (`Ctrl+C` /
   `Ctrl+X`, poi incollalo in Esplora risorse), copia il percorso (`Ctrl+Maiusc+C`), apri con, apri un terminale lì
   (`Ctrl+T`), proprietà (`Alt+Invio`). Le scorciatoie funzionano anche a menu chiuso.
 - **Anteprima e preferiti fissati.** `Alt+P` mostra un riquadro di anteprima: l'inizio di un file di testo, o una
   miniatura. `Ctrl+P` fissa un risultato in cima, così compare sempre per primo.
+- **Impostazioni.** La scorciatoia che apre la barra, la lingua, il tema dei colori (Windows, Scuro, Chiaro, Notte,
+  Carta), l'avvio con Windows e cosa viene indicizzato: quali dischi, altre cartelle (con il selettore di cartelle) e
+  regole per ciò che va lasciato fuori dall'indice o nascosto dai risultati.
 - **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic,
-  dopo aver verificato lo SHA-256. Questo controllo è l'unica richiesta internet che lisdir fa.
+  dopo aver verificato lo SHA-256 (una copia portatile si aggiorna da sola, restando portatile). Questo controllo è
+  l'unica richiesta internet che lisdir fa, e si può spegnere nelle impostazioni.
 - **Interfaccia senza privilegi di amministratore.** La barra gira come utente normale; solo un piccolo
   programma in background è elevato.
-- **Italiano e inglese.** La lingua segue quella di Windows.
+- **Italiano e inglese.** La lingua segue quella di Windows, oppure si sceglie nelle impostazioni.
 
 ## Sintassi di ricerca
 
@@ -98,20 +104,23 @@ scrivi un percorso per riga, ad esempio `\\nas\condivisione`) e scrivere delle r
 **Non indicizzare** lascia fuori dall'indice i nomi e le cartelle che corrispondono, con tutto quello che contengono
 (risparmia memoria); **Nascondi dai risultati** li lascia indicizzati ma non li mostra mai. Una regola è un nome o un
 modello (`node_modules`, `*.tmp`, `~$*`; `*` è un testo qualsiasi, `?` un carattere) oppure il percorso di una cartella
-(`C:\Utenti\me\Cache`); maiuscole e minuscole non contano. Le modifiche a dischi, cartelle e regole valgono dopo un
+(`C:\Users\me\Cache`); maiuscole e minuscole non contano. Le modifiche a dischi, cartelle e regole valgono dopo un
 riavvio, e la finestra ha il pulsante **Riavvia ora**. Rimuovere o cambiare una regola di non indicizzazione ricostruisce
 una volta l'indice dei dischi locali.
 
 I dischi locali che non sono NTFS (chiavette USB, dischi exFAT e FAT) vengono indicizzati scorrendo le cartelle, e una
 chiavetta già vista mantiene i suoi risultati mentre è scollegata.
 
-**Impostazioni** (menu dell'icona → Impostazioni…, oppure `Ctrl+,` nella barra): la scorciatoia che apre la barra, la lingua, il tema dei colori, il nascondere l'icona, il controllo giornaliero degli aggiornamenti, l'avvio con Windows, «digita
-per cercare» e cosa viene indicizzato (qui sotto). Sono salvate in `%LOCALAPPDATA%\lisdir\settings.txt`.
+**Impostazioni** (menu dell'icona → Impostazioni…, `Ctrl+,` nella barra, oppure `lisdir.exe --settings`): la
+scorciatoia che apre la barra (serve Ctrl, Alt o Win, oppure un tasto funzione; una già usata da un altro programma
+viene rifiutata), la lingua, il tema dei colori, il nascondere l'icona, il controllo giornaliero degli aggiornamenti,
+l'avvio con Windows, «digita per cercare» e cosa viene indicizzato (qui sopra). Sono salvate in
+`%LOCALAPPDATA%\lisdir\settings.txt`, righe `chiave=valore`.
 
 **Aggiornamenti.** lisdir controlla le release su GitHub pochi secondi dopo l'avvio e poi ogni giorno; se ce n'è una
 nuova, il menu dell'icona propone «Aggiorna a X.Y.Z…» (oppure scegli «Controlla aggiornamenti…» quando vuoi). Scarica
 l'installer, ne verifica lo SHA-256 con il file `SHA256SUMS.txt` pubblicato e lo avvia; Windows chiede il permesso e
-lisdir si riapre alla fine. Non installa nulla senza un tuo clic. Una copia portatile resta portatile: scarica il
+lisdir si riapre alla fine. Non installa nulla senza un tuo clic, e il controllo giornaliero si spegne nelle impostazioni. Una copia portatile resta portatile: scarica il
 nuovo exe portatile, lo verifica allo stesso modo, lo mette al posto del vecchio file e si riavvia (nessuna richiesta
 di permesso; la cartella deve essere scrivibile).
 
