@@ -54,6 +54,18 @@ l'opzione è attiva e quanti PC sono connessi, e l'elenco sotto mostra ogni PC a
 volta che è stato visto. Finché l'opzione è spenta non gira e non si
 collega niente.
 
+**Sicurezza di Altri PC.** Cosa la protegge: ogni PC ha una chiave a 256 bit (`peer.key`, cifrata con la protezione
+dati di Windows) la cui parte pubblica è il suo codice; i collegamenti sono cifrati e legati a quelle chiavi; un PC che
+non è nel tuo elenco non riceve risposta; l'abbinamento richiede la tua conferma sul PC interrogato e un codice di
+verifica di 4 caratteri che deve essere uguale su entrambi gli schermi; i file non vengono mai inviati e un risultato di
+un altro PC non si può aprire. Cosa sapere: un codice non è un segreto, quindi chi lo ha può solo *chiedere* di
+abbinarsi, e solo nei due minuti in cui l'hai aperto; un PC abbinato può fare quante domande vuole, quindi può
+elencare lentamente i nomi presenti su questo PC, compresi quelli di cartelle che il tuo account non può leggere (l'indice
+si legge con privilegi elevati); un programma che gira col tuo utente può usare `peer.key` (la protezione dati di Windows
+ferma le copie del file, non i programmi che girano come te); il relay pubblico, usato solo se non c'è un percorso
+diretto, può vedere che esiste un PC con quella chiave, il suo indirizzo e quanto traffico scambia, non il contenuto.
+Togli un PC dall'elenco nelle impostazioni e smette subito di ricevere risposte.
+
 **Aggiornamenti.** Il menu dell'icona propone la nuova versione quando viene pubblicata e la installa dopo il tuo clic,
   dopo aver verificato lo SHA-256 (una copia portatile si aggiorna da sola, restando portatile). Questo controllo è
   l'unica richiesta internet che lisdir fa, e si può spegnere nelle impostazioni.

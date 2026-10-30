@@ -55,6 +55,13 @@ unelevated, and every feature ships with a test or a measured check.
 - [ ] Tell the user when settings cannot be saved (the settings window shows the error; other places do not yet)
 - [ ] Measure the memory used by the UI and the helper with 1.6 million entries and state it in the README
 
+## Other PCs — next
+- [ ] Limit how often a paired PC may ask, and the connections waiting at once
+- [ ] Share only some folders, or names without paths
+- [ ] Short pairing code with a password-based key exchange (PAKE) instead of the long code
+- [ ] Show the last results of a PC that is off, marked as not online
+- [ ] Faster start: load the disks in parallel without raising the memory peak, and skip the folder recount when nothing changed (it takes about 0.4 s per 1.6 million entries)
+
 ## Later
 - [ ] Double-tap `Ctrl` as a shortcut (needs the low-level keyboard hook)
 - [ ] Cloud-synced folders (OneDrive, Google Drive, Dropbox) as ordinary indexed folders

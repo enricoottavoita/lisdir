@@ -96,7 +96,7 @@ folders itself, because only your user session has your credentials and drive ma
 
 | File | Role |
 |---|---|
-| `src-tauri/src/engine.rs` | The index (flat list of entries), MFT enumeration, USN journal tailing, cache and change log, directory walker, fuzzy matcher, parallel search |
+| `src-tauri/src/engine.rs` | The index (a flat list of entries, with each name's letters and its lowercased name kept apart so a search reads little), MFT enumeration, USN journal tailing, cache and change log, directory walker, fuzzy matcher, parallel search |
 | `src-tauri/src/mft.rs` | Reads modified time and size out of a raw NTFS file record |
 | `src-tauri/src/service.rs` | Elevated helper, pipe server/client, scheduled-task install |
 | `src-tauri/src/query.rs` | The search syntax: parsing `ext:`, `date:`, quotes, `docs\`, ... |
@@ -158,6 +158,17 @@ allow it and otherwise through a public relay that only carries encrypted bytes.
 typing never waits for it. Nothing runs, and nothing connects, while the option is off. A badge next to the section
 title says whether the option is active and how many PCs are connected, and the list below it shows each paired PC
 as connected or not, with when it was last seen.
+
+**Security of Other PCs.** What protects it: each PC has a 256-bit key (`peer.key`, sealed with Windows data
+protection) whose public half is its code; connections are encrypted and tied to those keys; a PC that is not on your
+list gets no answer; pairing needs your confirmation on the PC being asked, and a 4-character verification code that
+must be the same on both screens; files are never sent and a result from another PC cannot be opened. What to know: a
+code is not a secret, so anyone who has it can only *ask* to pair, and only during the two minutes you opened;
+a paired PC may ask as many questions as it likes, so it can slowly list the names on this PC, including names in
+folders your account cannot read (the index is read with elevated rights); a program running as you can use `peer.key`
+(Windows data protection stops copies of the file, not programs running as you); the public relay, used only when no
+direct path exists, can see that a PC with that key exists, its address and how much is exchanged, not the content.
+Remove a PC from the list in the settings and it stops being answered at once.
 
 **What is indexed.** In the settings window you can untick a disk, add more folders to walk (the **Add folder…**
 button opens the Windows folder chooser; or type one path per line, for example `\\nas\share`; the older
