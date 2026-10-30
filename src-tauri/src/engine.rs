@@ -38,6 +38,8 @@ pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain([0]).collect()
 }
 
+/// An entry as it is handed to the index (`Index::insert`). The index keeps its name in one block of bytes and the rest as
+/// a `Rec`.
 pub struct Entry {
     parent: u64,
     pub name: String,
@@ -51,10 +53,27 @@ pub struct Entry {
     pub hidden: bool,
 }
 
-/// One bit per letter a-z, one for all digits, one for anything else. A word can only match a name whose bits
-/// include all of the word's own bits.
+/// What the index keeps of an entry (its name is in `Index::names`, see `Index::name`).
+pub struct Rec {
+    parent: u64,
+    time: i64,
+    pub size: u64,
+    pub is_dir: bool,
+    pub hidden: bool,
+}
+
+/// One bit per letter a-z (case does not matter), one for all digits, one for anything else. A word can only match
+/// a name whose bits include all of the word's own bits.
 fn letter_bits(s: &str) -> u32 {
-    s.chars().fold(0, |m, c| m | 1 << match c {
+    if s.is_ascii() {
+        // nearly every name: by bytes (setting bit 5 turns a capital letter into its small one)
+        return s.bytes().fold(0, |m, b| m | 1 << match b | 0x20 {
+            l @ b'a'..=b'z' => (l - b'a') as u32,
+            _ if b.is_ascii_digit() => 26,
+            _ => 27,
+        });
+    }
+    s.chars().flat_map(char::to_lowercase).fold(0, |m, c| m | 1 << match c {
         'a'..='z' => c as u32 - 'a' as u32,
         '0'..='9' => 26,
         _ => 27,
@@ -72,30 +91,132 @@ impl Entry {
     }
 }
 
+/// File reference number to position in `Index::items`, as a table of 4-byte positions with open addressing: the number
+/// itself is read back from `items`, so it is not kept twice. A map from numbers to positions takes about 28 bytes an
+/// entry over a few million entries; this takes about 6.
+#[derive(Default)]
+struct Lookup {
+    cells: Vec<u32>,
+    /// positions in the table
+    live: usize,
+    /// cells that are not free: positions and the marks of removed ones
+    used: usize,
+}
+
+const FREE: u32 = u32::MAX;
+const GONE: u32 = u32::MAX - 1;
+
+type Items = [(u64, Option<Rec>)];
+
+impl Lookup {
+    /// Cells for `n` positions, at most 70% full (a power of two, so that the number needs no division).
+    fn cells_for(n: usize) -> usize {
+        (n * 10 / 7 + 1).next_power_of_two().max(16)
+    }
+
+    fn with_capacity(n: usize) -> Self {
+        Lookup { cells: vec![FREE; Self::cells_for(n)], live: 0, used: 0 }
+    }
+
+    fn hash(frn: u64) -> usize {
+        (frn.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize
+    }
+
+    /// The cell that holds `frn`.
+    fn cell(&self, items: &Items, frn: u64) -> Option<usize> {
+        if self.cells.is_empty() {
+            return None;
+        }
+        let mask = self.cells.len() - 1;
+        let mut c = Self::hash(frn) & mask;
+        loop {
+            match self.cells[c] {
+                FREE => return None,
+                GONE => {}
+                p if items[p as usize].0 == frn => return Some(c),
+                _ => {}
+            }
+            c = (c + 1) & mask;
+        }
+    }
+
+    fn get(&self, items: &Items, frn: u64) -> Option<u32> {
+        self.cell(items, frn).map(|c| self.cells[c])
+    }
+
+    /// Record that `frn` (not in the table yet) will be at position `pos`, the next one of `items`.
+    fn add(&mut self, items: &Items, frn: u64, pos: u32) {
+        if (self.used + 1) * 10 > self.cells.len() * 7 {
+            self.rebuild(items, self.live + 1);
+        }
+        let mask = self.cells.len() - 1;
+        let mut c = Self::hash(frn) & mask;
+        while self.cells[c] != FREE && self.cells[c] != GONE {
+            c = (c + 1) & mask;
+        }
+        if self.cells[c] == FREE {
+            self.used += 1;
+        }
+        self.cells[c] = pos;
+        self.live += 1;
+    }
+
+    fn remove(&mut self, items: &Items, frn: u64) -> Option<u32> {
+        let c = self.cell(items, frn)?;
+        let pos = std::mem::replace(&mut self.cells[c], GONE);
+        self.live -= 1;
+        Some(pos)
+    }
+
+    /// Make the table again from the entries in `items`, with room for `n`.
+    fn rebuild(&mut self, items: &Items, n: usize) {
+        self.cells = vec![FREE; Self::cells_for(n)];
+        let mask = self.cells.len() - 1;
+        self.live = 0;
+        for (p, (frn, e)) in items.iter().enumerate() {
+            if e.is_some() {
+                let mut c = Self::hash(*frn) & mask;
+                while self.cells[c] != FREE {
+                    c = (c + 1) & mask;
+                }
+                self.cells[c] = p as u32;
+                self.live += 1;
+            }
+        }
+        self.used = self.live;
+    }
+}
+
 /// Holes left by removed entries are squeezed out once there are this many (and over an eighth of the vector).
 const COMPACT_MIN: usize = 10_000;
 
 /// Marks a removed entry in `Index::hot` (the letter bits use the low 28 bits).
 const DEAD: u32 = 1 << 31;
 
+/// Marks a name made only of ASCII characters in `Index::hot`: it can be compared without case by bytes.
+const ASCII: u32 = 1 << 30;
+
 /// The entries of a volume by file reference number. They live in one flat vector (plus a lookup table), so a
 /// search walks them in order and can hand slices to several threads, which a hash map does not allow. A removed
 /// entry leaves a hole that is cleaned up later.
 ///
 /// What a search needs from every entry sits apart from the entries, in two small arrays and one block of bytes,
-/// all in the same order as `items`: `hot` (which letters the name holds, see `letter_bits`; `DEAD` for a hole),
-/// `pos` (where the lowercased name starts in `names`) and `names` (each lowercased name as a 2-byte length and its
-/// UTF-8 bytes, back to back). So a search reads about 8 bytes per entry to rule most of them out, and the lowercased
-/// names take no allocation of their own.
+/// all in the same order as `items`: `hot` (which letters the name holds, see `letter_bits`; `DEAD` for a hole; `ASCII`),
+/// `pos` (where the name starts in `names`) and `names` (each name as a 2-byte length and its UTF-8 bytes, back to back).
+/// So a search reads about 8 bytes per entry to rule most of them out, and a name is kept once, as it was given: it is
+/// compared without case as it is read.
 #[derive(Default)]
 pub struct Index {
-    slot: HashMap<u64, u32>,
-    items: Vec<(u64, Option<Entry>)>,
+    slot: Lookup,
+    items: Vec<(u64, Option<Rec>)>,
     hot: Vec<u32>,
     pos: Vec<u32>,
     names: Vec<u8>,
     /// bytes of `names` that belong to removed or renamed entries (they are dropped when the block is rebuilt)
     waste: usize,
+    /// The vectors were sized to fit (at load, or after a rebuild): growing them by doubling, as `Vec` does, would
+    /// reserve as much again as the whole index for a few new files, so they grow by a thirty-second instead.
+    tight: bool,
 }
 
 impl Index {
@@ -103,99 +224,131 @@ impl Index {
         Self::default()
     }
 
+    #[cfg(test)]
     pub fn with_capacity(n: usize) -> Self {
+        Self::with_names(n, n * 32) // about 31 bytes per name
+    }
+
+    /// Room for `n` entries whose names add up to `name_bytes` (the 2-byte lengths are added here), plus a little for
+    /// what is added later.
+    pub fn with_names(n: usize, name_bytes: usize) -> Self {
+        let room = n + n / 64 + 4096;
         Index {
-            slot: HashMap::with_capacity(n),
-            items: Vec::with_capacity(n),
-            hot: Vec::with_capacity(n),
-            pos: Vec::with_capacity(n),
-            names: Vec::with_capacity(n * 28), // about 26 bytes per name plus the length
+            slot: Lookup::with_capacity(room),
+            items: Vec::with_capacity(room),
+            hot: Vec::with_capacity(room),
+            pos: Vec::with_capacity(room),
+            names: Vec::with_capacity(2 * room + name_bytes + name_bytes / 32),
             waste: 0,
+            tight: true,
         }
     }
 
-    /// The lowercased name of the entry in position `i` of `items`.
-    fn lower_at(&self, i: usize) -> &str {
+    /// Give back the room the vectors do not use (after an index was built by adding entries one by one).
+    pub fn shrink_to_fit(&mut self) {
+        self.slot.rebuild(&self.items, self.slot.live);
+        self.items.shrink_to_fit();
+        self.hot.shrink_to_fit();
+        self.pos.shrink_to_fit();
+        self.names.shrink_to_fit();
+        self.tight = true;
+    }
+
+    /// Make room for more entries in small steps (see `tight`).
+    fn grow(&mut self) {
+        let more = (self.items.len() / 32).max(4096);
+        self.items.reserve_exact(more);
+        self.hot.reserve_exact(more);
+        self.pos.reserve_exact(more);
+    }
+
+    /// The name of the entry in position `i` of `items`, as it was given.
+    fn name_at(&self, i: usize) -> &str {
         let p = self.pos[i] as usize;
         let n = u16::from_le_bytes([self.names[p], self.names[p + 1]]) as usize;
         // SAFETY: `names` only ever receives the bytes of a `&str` (see `store_name`), cut at its own length.
         unsafe { std::str::from_utf8_unchecked(&self.names[p + 2..p + 2 + n]) }
     }
 
-    /// Append the lowercased `name` to `names`: its position and letter bits. Plain ASCII names (nearly all of them)
-    /// are lowercased in place, with no temporary string.
+    /// Append `name` to `names`: its position and its bits for `hot`.
     fn store_name(&mut self, name: &str) -> (u32, u32) {
-        let at = self.names.len();
-        self.names.extend_from_slice(&[0, 0]); // the length, filled in below
-        if name.is_ascii() {
-            self.names.extend(name.bytes().map(|b| b.to_ascii_lowercase()));
-        } else {
-            self.names.extend_from_slice(name.to_lowercase().as_bytes());
+        if self.tight && self.names.capacity() - self.names.len() < 2 + name.len() {
+            self.names.reserve_exact((self.names.len() / 32).max(1 << 16));
         }
-        let mut n = self.names.len() - at - 2;
-        if n > u16::MAX as usize {
-            self.names.truncate(at + 2); // never happens: names are at most 255 characters
-            n = 0;
-        }
-        self.names[at..at + 2].copy_from_slice(&(n as u16).to_le_bytes());
-        // SAFETY: the bytes just appended are the lowercase of a `&str`, cut only at their end (and not at all if too long).
-        let bits = letter_bits(unsafe { std::str::from_utf8_unchecked(&self.names[at + 2..]) });
-        (at as u32, bits)
+        let at = self.names.len() as u32;
+        let name = if name.len() <= u16::MAX as usize { name } else { "" }; // never happens: names are at most 255 characters
+        self.names.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        self.names.extend_from_slice(name.as_bytes());
+        (at, letter_bits(name) | if name.is_ascii() { ASCII } else { 0 })
     }
 
-    /// The entry and its lowercased name.
-    fn get_lower(&self, frn: &u64) -> Option<(&Entry, &str)> {
-        let i = *self.slot.get(frn)? as usize;
-        Some((self.items[i].1.as_ref()?, self.lower_at(i)))
+    /// The entry and its name.
+    fn get_named(&self, frn: &u64) -> Option<(&Rec, &str)> {
+        let i = self.slot.get(&self.items, *frn)? as usize;
+        Some((self.items[i].1.as_ref()?, self.name_at(i)))
+    }
+
+    /// The name of the entry with this file reference number.
+    pub fn name(&self, frn: &u64) -> Option<&str> {
+        self.get_named(frn).map(|(_, name)| name)
     }
 
     pub fn len(&self) -> usize {
-        self.slot.len()
+        self.slot.live
     }
 
     pub fn is_empty(&self) -> bool {
-        self.slot.is_empty()
+        self.slot.live == 0
     }
 
     pub fn contains_key(&self, frn: &u64) -> bool {
-        self.slot.contains_key(frn)
+        self.slot.get(&self.items, *frn).is_some()
     }
 
-    pub fn get(&self, frn: &u64) -> Option<&Entry> {
-        self.slot.get(frn).and_then(|&i| self.items[i as usize].1.as_ref())
+    pub fn get(&self, frn: &u64) -> Option<&Rec> {
+        self.slot.get(&self.items, *frn).and_then(|i| self.items[i as usize].1.as_ref())
     }
 
-    pub fn get_mut(&mut self, frn: &u64) -> Option<&mut Entry> {
-        let i = *self.slot.get(frn)?;
+    pub fn get_mut(&mut self, frn: &u64) -> Option<&mut Rec> {
+        let i = self.slot.get(&self.items, *frn)?;
         self.items[i as usize].1.as_mut()
     }
 
-    pub fn insert(&mut self, frn: u64, e: Entry) -> Option<Entry> {
-        let (at, bits) = self.store_name(&e.name);
-        if let Some(&i) = self.slot.get(&frn) {
+    pub fn insert(&mut self, frn: u64, e: Entry) -> Option<Rec> {
+        let rec = Rec { parent: e.parent, time: e.time, size: e.size, is_dir: e.is_dir, hidden: e.hidden };
+        self.insert_rec(frn, &e.name, rec)
+    }
+
+    /// `insert` for a name that is not in a `String` (the loader reads it straight from the file).
+    fn insert_rec(&mut self, frn: u64, name: &str, rec: Rec) -> Option<Rec> {
+        let (at, bits) = self.store_name(name);
+        if let Some(i) = self.slot.get(&self.items, frn) {
             let i = i as usize;
-            self.waste += 2 + self.lower_at(i).len();
+            self.waste += 2 + self.name_at(i).len();
             (self.pos[i], self.hot[i]) = (at, bits);
-            let old = self.items[i].1.replace(e);
+            let old = self.items[i].1.replace(rec);
             // renames leave their old name behind: rebuild the block when that is a quarter of it
             if self.waste > 1 << 20 && self.waste * 4 > self.names.len() {
                 self.reindex();
             }
             return old;
         }
-        self.slot.insert(frn, self.items.len() as u32);
-        self.items.push((frn, Some(e)));
+        if self.tight && self.items.len() == self.items.capacity() {
+            self.grow();
+        }
+        self.slot.add(&self.items, frn, self.items.len() as u32);
+        self.items.push((frn, Some(rec)));
         self.hot.push(bits);
         self.pos.push(at);
         None
     }
 
-    pub fn remove(&mut self, frn: &u64) -> Option<Entry> {
-        let i = self.slot.remove(frn)? as usize;
-        self.waste += 2 + self.lower_at(i).len();
+    pub fn remove(&mut self, frn: &u64) -> Option<Rec> {
+        let i = self.slot.remove(&self.items, *frn)? as usize;
+        self.waste += 2 + self.name_at(i).len();
         self.hot[i] = DEAD;
         let old = self.items[i].1.take();
-        let holes = self.items.len() - self.slot.len();
+        let holes = self.items.len() - self.slot.live;
         if holes >= COMPACT_MIN && holes * 8 > self.items.len() {
             self.reindex();
         }
@@ -204,7 +357,7 @@ impl Index {
 
     /// Squeeze the holes out of `items`, `hot`, `pos` and `names`, and point `slot` at the new positions.
     fn reindex(&mut self) {
-        let n = self.slot.len();
+        let n = self.items.iter().filter(|x| x.1.is_some()).count();
         let mut names = Vec::with_capacity((self.names.len() - self.waste.min(self.names.len())).max(16));
         let (mut items, mut hot, mut pos) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
         for (i, item) in std::mem::take(&mut self.items).into_iter().enumerate() {
@@ -216,35 +369,40 @@ impl Index {
             pos.push(names.len() as u32);
             names.extend_from_slice(&self.names[p..p + len]);
             hot.push(self.hot[i]);
-            self.slot.insert(item.0, items.len() as u32);
             items.push(item);
         }
-        (self.items, self.hot, self.pos, self.names, self.waste) = (items, hot, pos, names, 0);
+        (self.items, self.hot, self.pos, self.names, self.waste, self.tight) = (items, hot, pos, names, 0, true);
+        self.slot.rebuild(&self.items, n);
     }
 
     /// Keep the entries `keep` says yes to (it may also change them).
-    pub fn retain(&mut self, mut keep: impl FnMut(&u64, &mut Entry) -> bool) {
+    pub fn retain(&mut self, mut keep: impl FnMut(&u64, &mut Rec) -> bool) {
         for (i, (f, e)) in self.items.iter_mut().enumerate() {
             if e.as_mut().is_some_and(|x| !keep(f, x)) {
                 *e = None;
-                self.slot.remove(f);
                 self.hot[i] = DEAD;
-                // its bytes in `names` are counted as waste by `reindex` below, which rebuilds the block anyway
+                // `reindex` below rebuilds the names and the table without it
             }
         }
         self.reindex();
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &u64> {
-        self.slot.keys()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&u64, &Entry)> {
-        self.items.iter().filter_map(|(f, e)| e.as_ref().map(|e| (f, e)))
+        self.items.iter().filter(|x| x.1.is_some()).map(|x| &x.0)
     }
 
     #[cfg(test)]
-    pub fn values(&self) -> impl Iterator<Item = &Entry> {
+    pub fn iter(&self) -> impl Iterator<Item = (&u64, &Rec)> {
+        self.items.iter().filter_map(|(f, e)| e.as_ref().map(|e| (f, e)))
+    }
+
+    /// Every entry with its name.
+    pub fn iter_named(&self) -> impl Iterator<Item = (&u64, &Rec, &str)> {
+        self.items.iter().enumerate().filter_map(move |(i, (f, e))| e.as_ref().map(|e| (f, e, self.name_at(i))))
+    }
+
+    #[cfg(test)]
+    pub fn values(&self) -> impl Iterator<Item = &Rec> {
         self.items.iter().filter_map(|(_, e)| e.as_ref())
     }
 
@@ -256,8 +414,8 @@ impl Index {
 }
 
 impl std::ops::Index<&u64> for Index {
-    type Output = Entry;
-    fn index(&self, frn: &u64) -> &Entry {
+    type Output = Rec;
+    fn index(&self, frn: &u64) -> &Rec {
         self.get(frn).expect("no entry with this file reference")
     }
 }
@@ -283,7 +441,7 @@ pub struct Volume {
 }
 
 /// A decoded USN_RECORD_V2.
-struct Rec {
+struct UsnRec {
     frn: u64,
     parent: u64,
     time: i64,
@@ -309,7 +467,7 @@ pub fn filetime_to_unix(ft: i64) -> i64 {
 }
 
 /// Decode the records of an ENUM/READ output buffer (after its 8-byte header).
-fn parse_records(buf: &[u8]) -> Vec<Rec> {
+fn parse_records(buf: &[u8]) -> Vec<UsnRec> {
     let (mut out, mut off) = (vec![], 0);
     while off + 60 <= buf.len() {
         let len = rd::<u32>(buf, off) as usize;
@@ -322,7 +480,7 @@ fn parse_records(buf: &[u8]) -> Vec<Rec> {
             .chunks_exact(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
-        out.push(Rec {
+        out.push(UsnRec {
             frn: rd(buf, off + 8),
             parent: rd(buf, off + 16),
             time: filetime_to_unix(rd(buf, off + 32)),
@@ -451,9 +609,9 @@ fn prune_with(idx: &mut Index, root: &str, act: &rules::Active) {
             cur = parent;
         }
         for &c in chain.iter().rev() {
-            let Some((e, lower)) = idx.get_lower(&c) else { continue };
+            let Some((e, name)) = idx.get_named(&c) else { continue };
             let path = (need_path && e.is_dir).then(|| full_path(idx, c, root).to_lowercase());
-            base = verdict_for(act, lower, path.as_deref(), base);
+            base = verdict_for(act, &name.to_lowercase(), path.as_deref(), base);
             memo.insert(c, base);
         }
     }
@@ -490,6 +648,7 @@ pub fn scan_volume(letter: char) -> Result<Volume, String> {
     fill_meta(&h, &mut idx);
     prune(&mut idx, &format!("{letter}:"));
     sum_folders(&mut idx);
+    idx.shrink_to_fit();
     // ponytail: no active journal => journal_id 0, no live updates and no cache (always rescanned).
     Ok(Volume { root: format!("{letter}:"), walk: false, idx, journal_id: j.map_or(0, |j| j.UsnJournalID), next_usn: j.map_or(0, |j| j.NextUsn), dirty: true })
 }
@@ -652,14 +811,14 @@ fn write_cache(v: &Volume) -> io::Result<()> {
     b.extend(v.journal_id.to_le_bytes());
     b.extend(v.next_usn.to_le_bytes());
     b.extend((v.idx.len() as u64).to_le_bytes());
-    for (frn, e) in v.idx.iter() {
+    for (frn, e, name) in v.idx.iter_named() {
         b.extend(frn.to_le_bytes());
         b.extend(e.parent.to_le_bytes());
         b.extend(e.time.to_le_bytes());
         b.extend(e.size.to_le_bytes());
         b.push(e.is_dir as u8);
-        b.extend((e.name.len() as u16).to_le_bytes());
-        b.extend(e.name.as_bytes());
+        b.extend((name.len() as u16).to_le_bytes());
+        b.extend(name.as_bytes());
     }
     let tmp = p.with_extension("tmp");
     std::fs::write(&tmp, b)?;
@@ -782,17 +941,48 @@ pub fn save_shared(vol: &RwLock<Volume>) -> io::Result<()> {
     Ok(())
 }
 
+/// Make sure `buf[*off..*have]` holds at least `want` bytes, moving what is left to the front and reading more.
+fn ensure(r: &mut impl io::Read, buf: &mut [u8], have: &mut usize, off: &mut usize, want: usize) -> Option<()> {
+    while *have - *off < want {
+        if *off > 0 {
+            buf.copy_within(*off..*have, 0);
+            *have -= *off;
+            *off = 0;
+        }
+        let got = r.read(&mut buf[*have..]).ok()?;
+        if got == 0 {
+            return None; // the file ends too soon
+        }
+        *have += got;
+    }
+    Some(())
+}
+
 fn load(root: &str, walk: bool) -> Option<Volume> {
-    let b = std::fs::read(cache_path(root)).ok()?;
-    if b.get(..4)? != b"LSD3" {
+    let mut file = std::fs::File::open(cache_path(root)).ok()?;
+    let len = file.metadata().ok()?.len() as usize;
+    // read in pieces of 1 MB: the file can be 100 MB, and holding all of it next to the index it becomes is a peak
+    // for nothing
+    let mut buf = vec![0u8; 1 << 20];
+    let (mut have, mut off) = (0, 0);
+    ensure(&mut file, &mut buf, &mut have, &mut off, 28)?;
+    if &buf[..4] != b"LSD3" {
         return None;
     }
-    let (journal_id, next_usn, n) = (rd::<u64>(&b, 4), rd::<i64>(&b, 12), rd::<u64>(&b, 20) as usize);
-    let (mut idx, mut off) = (Index::with_capacity(n), 28);
+    let (journal_id, next_usn, n) = (rd::<u64>(&buf, 4), rd::<i64>(&buf, 12), rd::<u64>(&buf, 20) as usize);
+    if n > len / 35 {
+        return None; // every record is at least its 35-byte head: a damaged header
+    }
+    off = 28;
+    // the names are what is left of the file after the heads, so the index can be sized exactly
+    let mut idx = Index::with_names(n, len.saturating_sub(28 + 35 * n));
     for _ in 0..n {
-        let nlen = rd::<u16>(&b, off + 33) as usize;
-        let name = String::from_utf8(b.get(off + 35..off + 35 + nlen)?.to_vec()).ok()?;
-        idx.insert(rd(&b, off), Entry::new(rd(&b, off + 8), name, b[off + 32] != 0, rd(&b, off + 16)).with_size(rd(&b, off + 24)));
+        ensure(&mut file, &mut buf, &mut have, &mut off, 35)?;
+        let nlen = rd::<u16>(&buf, off + 33) as usize;
+        ensure(&mut file, &mut buf, &mut have, &mut off, 35 + nlen)?;
+        let name = std::str::from_utf8(&buf[off + 35..off + 35 + nlen]).ok()?;
+        let rec = Rec { parent: rd(&buf, off + 8), time: rd(&buf, off + 16), size: rd(&buf, off + 24), is_dir: buf[off + 32] != 0, hidden: false };
+        idx.insert_rec(rd(&buf, off), name, rec);
         off += 35 + nlen;
     }
     let mut v = Volume { root: root.to_string(), walk, idx, journal_id, next_usn, dirty: false };
@@ -1035,8 +1225,15 @@ fn walk_with(root: &str, stream: Option<&RwLock<Volume>>, act: &rules::Active) -
     });
     let mut idx = idx.into_inner().unwrap();
     match stream {
-        Some(v) => sum_folders(&mut v.write().unwrap().idx),
-        None => sum_folders(&mut idx),
+        Some(v) => {
+            let mut v = v.write().unwrap();
+            sum_folders(&mut v.idx);
+            v.idx.shrink_to_fit();
+        }
+        None => {
+            sum_folders(&mut idx);
+            idx.shrink_to_fit();
+        }
     }
     Walk { idx, dirs: dirs.into_inner(), failed: failed.into_inner() }
 }
@@ -1047,6 +1244,18 @@ fn walk_with(root: &str, stream: Option<&RwLock<Volume>>, act: &rules::Active) -
 /// they do not. Higher is better: word starts and consecutive letters score extra, long names and late
 /// matches lose a little. Single pass, no allocation: this runs once per indexed name on every keystroke.
 pub fn score(word: &str, name: &str) -> Option<f32> {
+    score_core::<false>(word, name)
+}
+
+/// One letter folded to lowercase (the letter by letter version of `str::to_lowercase`; they differ only for a few
+/// rare letters such as the capital dotted i, which this keeps as one letter).
+fn fold(c: char) -> char {
+    if c.is_ascii() { c.to_ascii_lowercase() } else { c.to_lowercase().next().unwrap_or(c) }
+}
+
+/// `score` for a name as it was given (`FOLD`): each letter is folded to lowercase as it is read, so no lowercase copy
+/// of the name has to be kept or made.
+fn score_core<const FOLD: bool>(word: &str, name: &str) -> Option<f32> {
     let mut want = word.chars();
     let mut cur = want.next();
     if cur.is_none() {
@@ -1054,6 +1263,7 @@ pub fn score(word: &str, name: &str) -> Option<f32> {
     }
     let (mut s, mut first, mut last, mut prev) = (0f32, 0usize, -1isize, ' ');
     for (p, c) in name.chars().enumerate() {
+        let c = if FOLD { fold(c) } else { c };
         if Some(c) == cur {
             if last < 0 {
                 first = p;
@@ -1074,26 +1284,43 @@ pub fn score(word: &str, name: &str) -> Option<f32> {
 
 pub fn full_path(idx: &Index, mut frn: u64, root: &str) -> String {
     let mut parts = vec![];
-    while let Some(e) = idx.get(&frn) {
-        parts.push(e.name.as_str());
+    while let Some((e, name)) = idx.get_named(&frn) {
+        parts.push(name);
         frn = e.parent;
     }
     parts.reverse();
     format!("{root}\\{}", parts.join("\\"))
 }
 
-fn ext_of(lower_name: &str) -> &str {
-    match lower_name.rfind('.') {
-        Some(i) if i > 0 && i + 1 < lower_name.len() => &lower_name[i + 1..],
+fn ext_of(name: &str) -> &str {
+    match name.rfind('.') {
+        Some(i) if i > 0 && i + 1 < name.len() => &name[i + 1..],
         _ => "",
+    }
+}
+
+/// Does `part` of a name equal the lowercase `lower` once its case is ignored? (`ascii`: the name is plain ASCII.)
+fn eq_fold(part: &str, lower: &str, ascii: bool) -> bool {
+    if ascii { part.eq_ignore_ascii_case(lower) } else { part.to_lowercase() == lower }
+}
+
+/// Does `name` contain the lowercase `needle` once its case is ignored?
+fn contains_fold(name: &str, needle: &str, ascii: bool) -> bool {
+    if ascii && needle.is_ascii() {
+        let n = needle.as_bytes();
+        n.is_empty() || name.as_bytes().windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+    } else {
+        name.to_lowercase().contains(needle)
     }
 }
 
 /// Does some ancestor folder's name contain `word`? (the `docs\` part of a query). A plain substring, not the
 /// fuzzy match used for file names: a folder filter must be precise, or `docs\` would also pick up "Discografia".
 fn in_folder(idx: &Index, mut parent: u64, word: &str) -> bool {
-    while let Some((p, lower)) = idx.get_lower(&parent) {
-        if lower.contains(word) {
+    while let Some(i) = idx.slot.get(&idx.items, parent) {
+        let i = i as usize;
+        let Some(p) = idx.items[i].1.as_ref() else { break };
+        if contains_fold(idx.name_at(i), word, idx.hot[i] & ASCII != 0) {
             return true;
         }
         parent = p.parent;
@@ -1102,7 +1329,7 @@ fn in_folder(idx: &Index, mut parent: u64, word: &str) -> bool {
 }
 
 /// Score of an entry for a query, or None if it does not qualify. Cheap checks first.
-fn matches(q: &Query, idx: &Index, i: usize, e: &Entry) -> Option<f32> {
+fn matches(q: &Query, idx: &Index, i: usize, e: &Rec) -> Option<f32> {
     if e.hidden {
         return None;
     }
@@ -1121,20 +1348,20 @@ fn matches(q: &Query, idx: &Index, i: usize, e: &Entry) -> Option<f32> {
             return None;
         }
     }
-    // the checks above need only the entry; from here on the lowercased name is read (a pure date or size filter never does)
-    let lower = idx.lower_at(i);
+    // the checks above need only the entry; from here on the name is read (a pure date or size filter never does)
+    let (name, ascii) = (idx.name_at(i), idx.hot[i] & ASCII != 0);
     if !q.ext.is_empty() || !q.not_ext.is_empty() {
-        let x = ext_of(lower);
-        if (!q.ext.is_empty() && !q.ext.iter().any(|v| v == x)) || q.not_ext.iter().any(|v| v == x) {
+        let x = ext_of(name);
+        if (!q.ext.is_empty() && !q.ext.iter().any(|v| eq_fold(x, v, ascii))) || q.not_ext.iter().any(|v| eq_fold(x, v, ascii)) {
             return None;
         }
     }
-    if q.not.iter().any(|w| lower.contains(w.as_str())) || !q.phrases.iter().all(|p| lower.contains(p.as_str())) {
+    if q.not.iter().any(|w| contains_fold(name, w, ascii)) || !q.phrases.iter().all(|p| contains_fold(name, p, ascii)) {
         return None;
     }
     let mut s = 0.0;
     for t in &q.terms {
-        s += score(t, lower)?;
+        s += score_core::<true>(t, name)?;
     }
     if !q.dirs.iter().all(|d| in_folder(idx, e.parent, d)) {
         return None;
@@ -1145,8 +1372,20 @@ fn matches(q: &Query, idx: &Index, i: usize, e: &Entry) -> Option<f32> {
         (true, true) => e.size as f32,
         (true, false) => e.time as f32 / 1e6,
     };
-    Some(base + if e.is_dir { 0.0 } else { 1.0 })
+    // a search by name lists the folders before the files (apps join the folders, see `FIRST`); a pure filter has
+    // no name to rank by and keeps the newest or the biggest first, files a hair ahead of folders
+    let tier = match (q.terms.is_empty(), e.is_dir) {
+        (false, true) => FIRST,
+        (false, false) | (true, true) => 0.0,
+        (true, false) => 1.0,
+    };
+    Some(base + tier)
 }
+
+/// Added to the score of a folder (and of an app) found by name, so that they come before the files. Far more than any
+/// name match is worth (a whole word typed in order scores about 200), and small enough for `f32` to keep the order
+/// among the folders themselves.
+pub const FIRST: f32 = 1000.0;
 
 /// Below this many entries a search runs on one thread (starting threads would cost more than it saves).
 const PARALLEL_FROM: usize = 50_000;
@@ -1392,7 +1631,7 @@ mod tests {
         let back = load("Z:", false).unwrap();
         std::fs::remove_file(cache_path("Z:")).unwrap();
         assert_eq!((back.idx.len(), back.next_usn, back.journal_id), (2, 200, 7));
-        assert_eq!((back.idx[&12].name.as_str(), back.idx[&12].time, back.idx[&12].size), ("fresh.txt", NOW + 20, 4096));
+        assert_eq!((back.idx.name(&12).unwrap(), back.idx[&12].time, back.idx[&12].size), ("fresh.txt", NOW + 20, 4096));
     }
 
     #[test]
@@ -1461,7 +1700,7 @@ mod tests {
         assert_eq!(i.len(), n as usize / 2);
         assert_eq!(i.iter().count(), n as usize / 2);
         assert!(i.items.len() < n as usize, "holes were squeezed out");
-        assert_eq!(i[&(n - 1)].name, format!("f{}", n - 1));
+        assert_eq!(i.name(&(n - 1)).unwrap(), format!("f{}", n - 1));
         assert!(i.get(&(n / 2 - 1)).is_none() && i.get(&(n / 2)).is_some());
         i.get_mut(&(n / 2)).unwrap().size = 9;
         assert_eq!(i[&(n / 2)].size, 9);
@@ -1542,9 +1781,9 @@ mod tests {
         }
         let r = root.to_str().unwrap();
         let w = walk_with(r, None, &rules(&["node_modules", "*.tmp"], &["private"]));
-        let names: Vec<&str> = w.idx.values().map(|e| e.name.as_str()).collect();
+        let names: Vec<&str> = w.idx.iter_named().map(|(_, _, n)| n).collect();
         assert!(!names.contains(&"node_modules") && !names.contains(&"b.js") && !names.contains(&"d.tmp"));
-        let hidden: Vec<&str> = w.idx.values().filter(|e| e.hidden).map(|e| e.name.as_str()).collect();
+        let hidden: Vec<&str> = w.idx.iter_named().filter(|(_, e, _)| e.hidden).map(|(_, _, n)| n).collect();
         assert_eq!(hidden.len(), 3); // private, deep, c.txt
         assert!(names.contains(&"a.txt") && names.contains(&"c.txt"));
         std::fs::remove_dir_all(&root).unwrap();
@@ -1656,7 +1895,7 @@ mod tests {
         let hit = search(&idx, &q("deepf"), 5)[0].1;
         assert_eq!(full_path(&idx, hit, r), format!("{r}\\a\\b\\deep file.txt"));
         assert!(idx[&hit].time > NOW, "walked entries carry their modified time"); // written just now
-        let folder = |n: &str| idx.iter().find(|(_, e)| e.name == n).unwrap().1.size;
+        let folder = |n: &str| idx.iter_named().find(|(_, _, name)| *name == n).unwrap().1.size;
         assert_eq!((folder("a"), folder("b")), (1, 1)); // folders add up the files below them
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -1702,6 +1941,72 @@ mod tests {
             i.insert(1000 + k, Entry::new(1 + k % 100, name, false, NOW - (k % 400) as i64 * DAYS));
         }
         i
+    }
+
+    /// The lookup table and the block of names give the same answers as a plain map through many inserts, renames,
+    /// removals and a `retain` (which rebuilds both).
+    #[test]
+    fn lookup_agrees_with_a_map_through_changes() {
+        let mut idx = Index::new();
+        let mut model = std::collections::HashMap::new();
+        let mut x = 88172645463325252u64;
+        for step in 0..80_000u64 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let frn = (x % 6000) | ((x / 6000 % 3) << 48); // numbers that collide and come back
+            match x % 5 {
+                0 | 1 => {
+                    let name = format!("N{step}.Txt");
+                    idx.insert(frn, Entry::new(0, name.clone(), false, 0));
+                    model.insert(frn, name);
+                }
+                2 => assert_eq!(idx.remove(&frn).is_some(), model.remove(&frn).is_some()),
+                _ => assert_eq!(idx.name(&frn), model.get(&frn).map(|n| n.as_str()), "step {step}"),
+            }
+            if step == 40_000 {
+                idx.retain(|f, _| f % 7 != 0);
+                model.retain(|f, _| f % 7 != 0);
+            }
+        }
+        assert_eq!(idx.len(), model.len());
+        for (f, n) in &model {
+            assert_eq!(idx.name(f), Some(n.as_str()));
+        }
+        assert_eq!(idx.keys().count(), model.len());
+        assert_eq!(idx.iter_named().count(), model.len());
+        idx.shrink_to_fit();
+        assert!(model.iter().all(|(f, n)| idx.name(f) == Some(n.as_str())), "still the same after shrinking");
+    }
+
+    /// A search by name lists the folders (best first) before the files, however good the file's name; a pure filter
+    /// keeps its own order.
+    #[test]
+    fn folders_come_before_files_for_a_name_search() {
+        let mut i = Index::new();
+        i.insert(1, Entry::new(0, "report".into(), true, NOW));
+        i.insert(2, Entry::new(0, "my old reports archive".into(), true, NOW));
+        i.insert(3, Entry::new(1, "report.pdf".into(), false, NOW));
+        let ids = |text: &str| search(&i, &q(text), 10).iter().map(|h| h.1).collect::<Vec<_>>();
+        assert_eq!(ids("report"), [1, 2, 3]);
+        assert_eq!(ids("date:month")[0], 3, "no name to rank by: the file keeps its small lead");
+    }
+
+    /// An index sized at load grows by small steps: doubling its vectors for a few new files would hold as much memory
+    /// again as the whole index.
+    #[test]
+    fn a_sized_index_grows_in_small_steps() {
+        let mut i = Index::with_names(10_000, 10_000 * 12);
+        let (items, names) = (i.items.capacity(), i.names.capacity());
+        for k in 0..items as u64 + 1 {
+            i.insert(k, Entry::new(0, format!("file {k}.txt"), false, NOW));
+        }
+        assert!(i.items.capacity() < items * 3 / 2, "items grew from {items} to {}: doubling would give {}", i.items.capacity(), items * 2);
+        assert!(i.names.capacity() < i.names.len() * 3 / 2, "names grew from {names} to {}", i.names.capacity());
+        let used = i.names.len();
+        i.shrink_to_fit();
+        assert!(i.names.capacity() < used + used / 50 && i.items.capacity() == i.len(), "shrink gives the room back");
+        assert_eq!(search(&i, &q("file 77.txt"), 1)[0].1, 77, "still searchable after growing and shrinking");
     }
 
     /// Guards against an accidental slowdown (say, an allocation back in the hot loop). A search over 300k names takes
@@ -1750,8 +2055,8 @@ mod tests {
         let t = std::time::Instant::now();
         fill_meta(&h, &mut idx);
         let known = idx.values().filter(|e| e.time != 0).count();
-        let big = idx.values().max_by_key(|e| e.size).unwrap();
-        println!("{} entries, metadata in {:?}; biggest: {} ({} bytes)", idx.len(), t.elapsed(), big.name, big.size);
+        let big = idx.iter_named().max_by_key(|(_, e, _)| e.size).unwrap();
+        println!("{} entries, metadata in {:?}; biggest: {} ({} bytes)", idx.len(), t.elapsed(), big.2, big.1.size);
         assert!(idx.values().any(|e| e.size > 0), "no sizes were read");
         assert!(known * 10 > idx.len() * 9, "fewer than 90% of the records could be read");
     }

@@ -53,7 +53,11 @@ unelevated, and every feature ships with a test or a measured check.
       unsupported file system, helper not running, network folder not yet walked, and how to fix it
 - [ ] About page: item counts, per-volume status, last walk times, and a small built-in speed test
 - [ ] Tell the user when settings cannot be saved (the settings window shows the error; other places do not yet)
-- [ ] Measure the memory used by the UI and the helper with 1.6 million entries and state it in the README
+- [ ] State the memory of the running helper and UI in the README once measured after the next release. On 0.17.2 with
+      C: and D: (1.7 million entries): helper 454 MB private after a day, UI 339 MB (it also holds the walked
+      disks), the web view about 144 MB private in 6 processes once the bar was opened. The index alone is now 154 MB
+      freshly loaded (326 MB before). Next savings: entries of 24 bytes (time as 4 bytes, the two flags in `hot`),
+      freeing the web view after a long idle time (costs about half a second to reopen the bar)
 
 ## Other PCs — next
 - [ ] Limit how often a paired PC may ask, and the connections waiting at once

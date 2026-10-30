@@ -11,7 +11,7 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 
 - **Instant search over millions of files.** Local NTFS volumes are indexed by reading the MFT directly,
   not by walking directories, which is far faster than scanning folders. Measured on 1.6 million entries
-  (two disks): a text search takes about 10–25 ms (30–40 ms for a single letter); filters such as `date:` and `size:` about 8–10 ms.
+  (two disks): a text search takes about 10–20 ms; filters such as `date:` and `size:` about 5 ms. The index of those entries takes about 155 MB of memory (93 bytes an entry) and loads in about half a second.
 - **Always current.** The index follows the NTFS USN journal (checked every second): files you create, rename,
   move or delete show up within a couple of seconds, and so do edits (the modified time and size are refreshed when
   a file is closed). The index is cached on disk, so a restart only has to catch up on what changed; between
@@ -28,6 +28,8 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
   grey "Recently opened" heading so it reads as history (`Del`
   removes one, `Shift+Del` clears the list). Things you open often rank a little higher, but how well the name
   matches always counts most.
+- **Folders first.** A search by name lists the folders (and apps) that match before the files, each group with the
+  best match first. A search with only filters (`date:`, `size:`) keeps its own order.
 - **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`. The
   list is refreshed when the bar opens, so new installs show up without a restart.
 - **File-type icons and sizes.** Results show the same icons as Explorer, and the size at the right: for a folder, the

@@ -10,6 +10,22 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-10-30
+
+### Changed
+- A search by name now lists the folders (and apps) that match before the files, each group best match
+  first. Searches that only use filters (`date:`, `size:`) keep their order.
+- About half the memory for the index, and a start twice as fast. Measured on the two disks of the development PC
+  (1.7 million entries): 154 MB instead of 326 MB (93 bytes an entry instead of 190), the cache loads in 0.44 s
+  instead of 0.9 s, and a search is a little faster. Each name is kept once, as it was given, in one block of memory
+  (before: a string for each entry and a lowercase copy), file numbers are found through a compact table of 4-byte
+  positions instead of a map, and an entry takes 40 bytes instead of 64. The cache is read in pieces instead of the
+  whole file at once, and the index is sized exactly when it is loaded. It also grows by small steps afterwards:
+  before, the first new file after a start made each of its lists double, which a helper left running for a day
+  paid for with well over 100 MB. An index built by a scan or a walk gives back its spare room when it is done.
+- The web view is drawn by the processor and runs without a separate graphics process: one process fewer and about
+  20 MB less (measured), with the same look. The bar is a list and a text box and needs no graphics card.
+
 ## [0.17.2] - 2026-10-30
 
 ### Added

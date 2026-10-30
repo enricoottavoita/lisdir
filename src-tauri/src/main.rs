@@ -231,7 +231,9 @@ async fn search(q: String, app: State<'_, App>) -> Result<Vec<Hit>, String> {
     }
     let mut hits = files(&app, &q, &query);
     if query.wants_apps() {
-        hits.extend(apps::search(&app.apps.read().unwrap(), &query, 20).into_iter().map(|(score, a)| Hit::app(&a.name, &a.id, score)));
+        // an app found by name sits with the folders, ahead of the files
+        let tier = if query.terms.is_empty() { 0.0 } else { engine::FIRST };
+        hits.extend(apps::search(&app.apps.read().unwrap(), &query, 20).into_iter().map(|(score, a)| Hit::app(&a.name, &a.id, score + tier)));
     }
     if !query.terms.is_empty() {
         // habits only nudge the order: how well the name matches still comes first
@@ -582,6 +584,12 @@ fn main() {
         wait_for_exit(pid);
     }
     update::cleanup();
+    // The bar is a short list and a text box: its web view needs no graphics card. Drawn by the processor and with the
+    // graphics part inside the browser process, the web view runs in one process fewer and takes about 20 MB less
+    // (measured). Every window must use the same arguments, so they are set here for all of them.
+    if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu --in-process-gpu");
+    }
     let loaded = settings::Settings::load();
     rules::set(&loaded.no_index, &loaded.exclude);
     typesearch::ENABLED.store(loaded.type_search, Ordering::SeqCst);

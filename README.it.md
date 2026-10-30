@@ -11,7 +11,7 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 
 - **Ricerca istantanea su milioni di file.** I dischi NTFS locali sono indicizzati leggendo direttamente la MFT,
   senza scorrere le cartelle, molto più veloce di una scansione delle cartelle. Misurato su 1,6 milioni di voci
-  (due dischi): una ricerca di testo richiede circa 10–25 ms (30–40 ms per una sola lettera); i filtri come `date:` e `size:` circa 8–10 ms.
+  (due dischi): una ricerca di testo richiede circa 10–20 ms; i filtri come `date:` e `size:` circa 5 ms. L'indice di quelle voci occupa circa 155 MB di memoria (93 byte a voce) e si carica in circa mezzo secondo.
 - **Sempre aggiornato.** L'indice segue il journal USN di NTFS (controllato ogni secondo): file creati, rinominati,
   spostati o eliminati compaiono entro un paio di secondi, e così le modifiche (data e dimensione si aggiornano alla
   chiusura del file). L'indice è salvato su disco, quindi a ogni riavvio recupera solo ciò che è cambiato; nel frattempo
@@ -28,6 +28,8 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
   titolo grigio «Aperti di recente» perché si legga come cronologia
   (`Canc` ne rimuove uno, `Maiusc+Canc` svuota l'elenco).
   Ciò che apri spesso sale un poco, ma conta sempre di più quanto il nome corrisponde.
+- **Prima le cartelle.** Una ricerca per nome elenca prima le cartelle (e le app) che corrispondono e poi i file, ogni
+  gruppo con la corrispondenza migliore in cima. Una ricerca con soli filtri (`date:`, `size:`) mantiene il suo ordine.
 - **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.
 - **Icone dei file e dimensioni.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto,
   documenti e archivi si distinguono subito, e a destra la dimensione: per una cartella, il totale dei file che

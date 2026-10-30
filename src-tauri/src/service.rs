@@ -84,7 +84,7 @@ pub fn search_volumes(vols: &Volumes, q: &Query) -> Vec<Hit> {
     for vol in vols.read().unwrap().iter() {
         let v = vol.read().unwrap();
         hits.extend(engine::search(&v.idx, q, 20).into_iter().map(|(score, f)| {
-            Hit::new(v.idx[&f].name.clone(), engine::full_path(&v.idx, f, &v.root), v.idx[&f].is_dir, score).with_size(v.idx[&f].size)
+            Hit::new(v.idx.name(&f).unwrap_or_default().to_string(), engine::full_path(&v.idx, f, &v.root), v.idx[&f].is_dir, score).with_size(v.idx[&f].size)
         }));
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
