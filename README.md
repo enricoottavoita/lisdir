@@ -11,7 +11,7 @@ Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
 
 - **Instant search over millions of files.** Local NTFS volumes are indexed by reading the MFT directly,
   not by walking directories, which is far faster than scanning folders. Measured on 1.6 million entries
-  (two disks): a text search takes about 35–60 ms; filters such as `date:` and `size:` about 10–15 ms.
+  (two disks): a text search takes about 10–25 ms (30–40 ms for a single letter); filters such as `date:` and `size:` about 8–10 ms.
 - **Always current.** The index follows the NTFS USN journal (checked every second): files you create, rename,
   move or delete show up within a couple of seconds, and so do edits (the modified time and size are refreshed when
   a file is closed). The index is cached on disk, so a restart only has to catch up on what changed; between
@@ -149,11 +149,11 @@ theme, hiding the tray icon, the daily update check, start with Windows, type to
 
 **Other PCs.** In the settings window, section *Other PCs*: switch it on, save and restart lisdir (on both PCs). Then
 pair them: on one PC press **Allow a new PC** (open for two minutes), on the other paste the first PC's code and press
-**Pair**. The first PC shows who is asking, with the start and end of that code, and you confirm there; both PCs then
-list each other, with no restart. (The list can also be edited by hand as `Name|code` lines.) From then on a search also asks your
+**Pair**. Both PCs show a 4-character verification code; the first one also shows who is asking, and you confirm there
+only if the code is the same on both screens. Both PCs then list each other, with no restart. (The list can also be edited by hand as `Name|code` lines.) From then on a search also asks your
 other PCs, and what they find appears after your own results with the PC's name in front. What travels: the search
 text one way, up to 20 names, paths and sizes the other way, never the files. Only PCs on your list are answered; the
-link is encrypted and tied to each PC's key (`peer.key`, never share it). It connects directly when both networks
+link is encrypted and tied to each PC's key (`peer.key`, stored sealed with Windows data protection; never share it). It connects directly when both networks
 allow it and otherwise through a public relay that only carries encrypted bytes. A PC that is off is skipped, so
 typing never waits for it. Nothing runs, and nothing connects, while the option is off. A badge next to the section
 title says whether the option is active and how many PCs are connected, and the list below it shows each paired PC

@@ -21,6 +21,8 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Network results shown while the first walk is still running; app list refreshed when the bar opens;
       `Shift+Del` clears all recent items (0.13.2)
 - [x] Other PCs: search the files of your other computers over an encrypted link, off by default (0.17)
+- [x] Pairing with a 4-character verification code; `peer.key` sealed with DPAPI (0.17.2)
+- [x] Search: letter masks apart from the entries, one block for the lowercased names, other PCs asked in parallel (0.17.2)
 - [x] The recent list is titled and drawn in grey, so it reads as history, not as results (0.16.4)
 - [x] `size:` filter and exact modified times from the NTFS file records (0.14)
 - [x] Search on several cores; the cache is saved without pausing searches (0.14.1)

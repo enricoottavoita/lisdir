@@ -160,7 +160,8 @@ const STR = {
         pairOpen: 'Allow a new PC', pairOpenHint: 'On this PC: open for two minutes, then paste the code shown here on the other PC and press Pair',
         pairOpenBtn: 'Allow for 2 minutes', pairWaiting: 'Waiting for the other PC…', pairClosed: 'Closed', pairNeedsRestart: 'Switch the option on, save, and restart lisdir first.',
         pairGo: 'Pair with another PC', pairGoHint: "On the other PC: press Allow a new PC here, paste that PC's code, then Pair", pairBtn: 'Pair',
-        pairWho: (n, c) => `“${n}” wants to pair. Its code starts with ${c.slice(0, 8)} and ends with ${c.slice(-6)}: check it on that PC.`,
+        pairWho: (n, c, k) => `“${n}” wants to pair. Verification code: ${k}. It must be the same on that PC, which shows it now. (Its code starts with ${c.slice(0, 8)} and ends with ${c.slice(-6)}.)`,
+        pairCheck: k => `Verification code: ${k}. Check it is the same on the other PC before it confirms.`, pairAdded: n => `Paired: ${n} is now in this PC's list.`,
         pairYes: 'Allow', pairNo: 'Refuse', pairDone: n => `Paired with ${n}.`, pairWait: 'Waiting for the other PC to confirm…',
         stOff: 'Off', stRestart: 'Restart lisdir to turn it on', stOffSoon: 'Off after a restart',
         stOn: n => n ? `Active · ${n} connected` : 'Active · no PC connected',
@@ -190,7 +191,8 @@ const STR = {
         pairOpen: 'Permetti un nuovo PC', pairOpenHint: "Su questo PC: apri per due minuti, poi incolla sull'altro PC il codice mostrato qui e premi Abbina",
         pairOpenBtn: 'Permetti per 2 minuti', pairWaiting: "In attesa dell'altro PC…", pairClosed: 'Chiuso', pairNeedsRestart: "Accendi l'opzione, salva e riavvia prima lisdir.",
         pairGo: 'Abbina un altro PC', pairGoHint: "Sull'altro PC: premi Permetti un nuovo PC, incolla qui il codice di quel PC, poi Abbina", pairBtn: 'Abbina',
-        pairWho: (n, c) => `«${n}» vuole abbinarsi. Il suo codice inizia con ${c.slice(0, 8)} e finisce con ${c.slice(-6)}: controllalo su quel PC.`,
+        pairWho: (n, c, k) => `«${n}» vuole abbinarsi. Codice di verifica: ${k}. Deve essere uguale su quel PC, che lo mostra ora. (Il suo codice inizia con ${c.slice(0, 8)} e finisce con ${c.slice(-6)}.)`,
+        pairCheck: k => `Codice di verifica: ${k}. Controlla che sia uguale sull'altro PC prima che confermi.`, pairAdded: n => `Abbinato: ${n} è ora nell'elenco di questo PC.`,
         pairYes: 'Consenti', pairNo: 'Rifiuta', pairDone: n => `Abbinato con ${n}.`, pairWait: "In attesa che l'altro PC confermi…",
         stOff: 'Spenta', stRestart: 'Riavvia lisdir per accenderla', stOffSoon: 'Si spegne al riavvio',
         stOn: n => n ? `Attiva · ${n} ${n === 1 ? 'connesso' : 'connessi'}` : 'Attiva · nessun PC connesso',
@@ -352,15 +354,20 @@ $('pairopen').onclick = async () => {
 };
 $('pairyes').onclick = () => invoke('pair_answer', { accept: true });
 $('pairno').onclick = () => invoke('pair_answer', { accept: false });
+let pairBusy = false, seenDone = null;
 $('pairgo').onclick = async () => {
   const code = $('paircode').value.trim();
   if (!code) return;
   $('pairres').textContent = S.pairWait;
+  pairBusy = true;
   try {
-    $('pairres').textContent = S.pairDone(await invoke('pair_with', { code }));
+    const name = await invoke('pair_with', { code });
+    pairBusy = false;
+    $('pairres').textContent = S.pairDone(name);
     $('paircode').value = '';
     peersRefresh();
   } catch (err) {
+    pairBusy = false;
     $('pairres').textContent = String(err);
   }
 };
@@ -388,10 +395,14 @@ setInterval(async () => {
   const st = await invoke('pair_state').catch(() => null);
   if (!st) return;
   $('pairask').hidden = !st.name;
-  if (st.name) $('pairwho').textContent = S.pairWho(st.name, st.code);
+  if (st.name) $('pairwho').textContent = S.pairWho(st.name, st.code, st.check);
+  if (pairBusy && st.check) $('pairres').textContent = S.pairWait + ' ' + S.pairCheck(st.check);
   if (st.open) $('pairmsg').textContent = S.pairWaiting; else if (wasOpen) $('pairmsg').textContent = '';
   if (wasOpen && !st.open) peersRefresh(); // closed: either paired or timed out; show the list as it is now
   wasOpen = st.open;
+  // a PC was just paired with this one (the first look only takes note of what was there before)
+  if (seenDone !== null && st.done && st.done !== seenDone) $('pairmsg').textContent = S.pairAdded(st.done);
+  seenDone = st.done;
 }, 1000);
 invoke('peer_code').then(c => { $('mycode').value = c; });
 $('copycode').onclick = () => { $('mycode').select(); navigator.clipboard?.writeText($('mycode').value).catch(() => {}); };

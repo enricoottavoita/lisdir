@@ -11,7 +11,7 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
 
 - **Ricerca istantanea su milioni di file.** I dischi NTFS locali sono indicizzati leggendo direttamente la MFT,
   senza scorrere le cartelle, molto più veloce di una scansione delle cartelle. Misurato su 1,6 milioni di voci
-  (due dischi): una ricerca di testo richiede circa 35–60 ms; i filtri come `date:` e `size:` circa 10–15 ms.
+  (due dischi): una ricerca di testo richiede circa 10–25 ms (30–40 ms per una sola lettera); i filtri come `date:` e `size:` circa 8–10 ms.
 - **Sempre aggiornato.** L'indice segue il journal USN di NTFS (controllato ogni secondo): file creati, rinominati,
   spostati o eliminati compaiono entro un paio di secondi, e così le modifiche (data e dimensione si aggiornano alla
   chiusura del file). L'indice è salvato su disco, quindi a ogni riavvio recupera solo ciò che è cambiato; nel frattempo
@@ -43,11 +43,11 @@ Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
   regole per ciò che va lasciato fuori dall'indice o nascosto dai risultati.
 - **Altri PC.** Nelle impostazioni, sezione *Altri PC*: accendi l'opzione, salva e riavvia lisdir (su entrambi i PC). Poi abbinali: su un
 PC premi **Permetti un nuovo PC** (aperto per due minuti), sull'altro incolla il codice del primo e premi **Abbina**. Il
-primo PC mostra chi lo chiede, con inizio e fine del suo codice, e confermi lì; poi i due PC si elencano a vicenda,
-senza riavvio. (L'elenco si può anche modificare a mano con righe `Nome|codice`.) Da quel momento una ricerca
+due PC mostrano un codice di verifica di 4 caratteri; il primo mostra anche chi lo chiede, e confermi lì solo se il
+codice è uguale su entrambi gli schermi. Poi i due PC si elencano a vicenda, senza riavvio. (L'elenco si può anche modificare a mano con righe `Nome|codice`.) Da quel momento una ricerca
 interroga anche gli altri PC, e ciò che trovano compare dopo i tuoi risultati con il nome del PC davanti. Cosa viaggia:
 il testo della ricerca in un verso, al massimo 20 nomi, percorsi e dimensioni nell'altro, mai i file. Rispondiamo solo
-ai PC nel tuo elenco; il collegamento è cifrato e legato alla chiave di ogni PC (`peer.key`, da non condividere).
+ai PC nel tuo elenco; il collegamento è cifrato e legato alla chiave di ogni PC (`peer.key`, salvata cifrata con la protezione dati di Windows; da non condividere).
 Si collega direttamente quando le reti lo permettono, altrimenti passa da un relay pubblico che trasporta solo byte
 cifrati. Un PC spento viene saltato, quindi scrivere non aspetta mai. Un badge accanto al titolo della sezione dice se
 l'opzione è attiva e quanti PC sono connessi, e l'elenco sotto mostra ogni PC abbinato, connesso o no, con l'ultima

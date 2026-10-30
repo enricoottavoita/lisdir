@@ -10,6 +10,31 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-10-30
+
+### Added
+- Pairing *Other PCs* now shows a 4-character verification code on both PCs (letters and digits, no `0 O 1 I`). It is
+  made from both PCs' keys and a random number only the two of them know; you confirm on the first PC only if it is the
+  same on both screens. A stranger who knows a PC's code can no longer pass as the PC you are pairing. Pairing needs
+  lisdir 0.17.2 or later on both PCs.
+- When a PC is paired, the settings window of the PC that was asked says so.
+
+### Fixed
+- The first time lisdir started with *Other PCs* on, the settings window and the network start could each make a
+  different key for this PC, so the code shown could differ from the one in use. The key is now read or made once.
+
+### Changed
+- `peer.key` is stored sealed with Windows data protection (DPAPI): a copy of the file taken from a backup, a disk
+  or another user's session cannot be used. A key written by an earlier version is sealed the first time it is read;
+  the PC's code and its pairings stay as they are.
+- Faster search. The index keeps which letters each name holds in a small array of its own, so most names are ruled
+  out by reading 4 bytes, and the lowercased names live in one block of memory instead of one string each (less
+  memory per entry). Each search thread keeps only its best results instead of collecting every match.
+- The other PCs are asked at the same time as this one, after a pause of 60 ms (it was after the local list was
+  shown, plus 150 ms), so their results arrive sooner.
+- Loading the index at start no longer makes a temporary string per name.
+- The search latency test uses a limit ten times tighter.
+
 ## [0.17.1] - 2026-10-29
 
 ### Fixed

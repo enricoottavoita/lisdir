@@ -221,22 +221,30 @@ function keyAct(e) {
 document.onmousedown = e => { if (menu >= 0 && !mn.contains(e.target)) { menu = -1; showMenu(); } };
 let remoteTimer, remoteHits = [], remoteQ = null; // the last answer of the other PCs, kept while a refresh asks again
 async function run(refresh) {
-  const my = ++seq, r = await invoke('search', { q: q.value }), cur = hits[sel]?.path;
-  if (my !== seq) return; // drop stale answers
-  const qq = q.value, keep = remoteQ === qq ? remoteHits : [], all = r.concat(keep);
-  // a refresh while indexing keeps the selected item; typing starts again from the top
-  const at = refresh === true && cur ? all.findIndex(h => h.path === cur) : -1;
-  hits = all; sel = Math.max(at, 0); render(); showHint();
-  // the other PCs answer after the local list is on screen (the answer is empty at once when the feature is off)
+  const my = ++seq, qq = q.value, keep = remoteQ === qq ? remoteHits : [];
+  let local = null, more = keep;
+  // whichever answer comes last redraws the list: this PC's files first, then the other PCs'. A refresh while indexing
+  // keeps the selected item; typing starts again from the top
+  const draw = stay => {
+    const cur = hits[sel]?.path;
+    hits = local.concat(more);
+    const at = stay && cur ? hits.findIndex(h => h.path === cur) : -1;
+    sel = Math.max(at, 0); render();
+  };
+  // the other PCs are asked at the same time as this one, after a short pause so quick typing makes one question
+  // (the answer is empty at once when the feature is off)
   clearTimeout(remoteTimer);
   if (qq.trim()) remoteTimer = setTimeout(async () => {
-    const more = await invoke('remote_search', { q: qq });
+    const got = await invoke('remote_search', { q: qq });
     if (my !== seq) return;
-    remoteHits = more; remoteQ = qq;
-    if (!more.length && !keep.length) return;
-    const at = hits[sel]?.path;
-    hits = r.concat(more); sel = Math.max(hits.findIndex(h => h.path === at), 0); render();
-  }, refresh === true && keep.length ? 1000 : 150);
+    remoteHits = got; remoteQ = qq;
+    if (!got.length && !more.length) return;
+    more = got;
+    if (local) draw(true);
+  }, refresh === true && keep.length ? 1000 : 60);
+  const r = await invoke('search', { q: qq });
+  if (my !== seq) return; // drop stale answers
+  local = r; draw(refresh === true); showHint();
 }
 function go(i, folder) {
   const h = hits[i];

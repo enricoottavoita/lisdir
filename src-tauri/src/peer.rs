@@ -7,11 +7,14 @@
 //! paths and sizes. Files are never sent and cannot be opened from afar.
 //!
 //! Pairing: on PC A press "Allow a new PC" (open for two minutes); on PC B paste A's code and press "Pair". A shows
-//! who is asking, with the start and end of its code, and the person at A confirms. Then each PC has the other in its
-//! list. A PC that is not in the list and is not being paired is closed on at once.
+//! who is asking, with the start and end of its code, and the person at A confirms. Both PCs also show a 4-character
+//! verification code (from both keys and a random number that only B and A know); A's person confirms only if it is
+//! the same on both screens, so a stranger who knows A's code and chooses a familiar name is caught. Then each PC has
+//! the other in its list. A PC that is not in the list and is not being paired is closed on at once.
 use crate::service::Hit;
 use iroh::{endpoint::{presets, Connection}, Endpoint, EndpointId, SecretKey};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex as StdMutex, OnceLock, RwLock},
@@ -46,6 +49,8 @@ struct Link {
 struct Trust {
     list: RwLock<Vec<(String, EndpointId)>>,
     name: String,
+    /// this PC's own id
+    me: EndpointId,
     /// when each PC last answered us or asked us something
     seen: StdMutex<HashMap<EndpointId, Instant>>,
 }
@@ -79,15 +84,56 @@ fn key_file() -> std::path::PathBuf {
     crate::engine::data_dir().join("peer.key")
 }
 
+/// Windows' own data protection (DPAPI): what `protect` seals only comes back for the same Windows account on this
+/// PC, so a copy of the file made from a backup, a disk or a shared folder is of no use elsewhere.
+fn dpapi(data: &[u8], protect: bool) -> Option<Vec<u8>> {
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::{Foundation::LocalFree, Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB}};
+    let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+    let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: null_mut() };
+    unsafe {
+        // flag 1 = CRYPTPROTECT_UI_FORBIDDEN: never ask anything
+        let ok = if protect {
+            CryptProtectData(&input, null(), null(), null(), null(), 1, &mut out)
+        } else {
+            CryptUnprotectData(&input, null_mut(), null(), null(), null(), 1, &mut out)
+        };
+        if ok == 0 || out.pbData.is_null() {
+            return None;
+        }
+        let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+        LocalFree(out.pbData as _);
+        Some(v)
+    }
+}
+
+/// Write the key sealed. If sealing fails the key is kept as it is rather than lost: the PC's code must not change.
+fn save_secret(k: &[u8; 32]) {
+    let _ = std::fs::create_dir_all(crate::engine::data_dir());
+    let _ = std::fs::write(key_file(), dpapi(k, true).unwrap_or_else(|| k.to_vec()));
+}
+
+/// The key of this PC. The file holds it sealed with DPAPI; 0.17.0 and 0.17.1 wrote it as 32 plain bytes, which is
+/// read once and sealed on the spot (same key, so the PC's code and its pairings stay valid).
 fn secret() -> SecretKey {
-    if let Ok(b) = std::fs::read(key_file()) {
-        if let Ok(b) = <[u8; 32]>::try_from(b.as_slice()) {
-            return SecretKey::from_bytes(&b);
+    // read (or made) once: the settings window and the network start both ask for it at startup, and two callers
+    // finding no file would each make a different key
+    static KEY: OnceLock<SecretKey> = OnceLock::new();
+    KEY.get_or_init(load_secret).clone()
+}
+
+fn load_secret() -> SecretKey {
+    if let Ok(file) = std::fs::read(key_file()) {
+        let plain = <[u8; 32]>::try_from(file.as_slice()).ok();
+        if let Some(k) = plain.or_else(|| dpapi(&file, false).and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())) {
+            if file.len() == 32 {
+                save_secret(&k);
+            }
+            return SecretKey::from_bytes(&k);
         }
     }
     let k = SecretKey::generate();
-    let _ = std::fs::create_dir_all(crate::engine::data_dir());
-    let _ = std::fs::write(key_file(), k.to_bytes());
+    save_secret(&k.to_bytes());
     k
 }
 
@@ -99,6 +145,19 @@ pub fn my_code() -> String {
 /// The name this PC gives itself when pairing.
 pub fn my_name() -> String {
     clean_name(&std::env::var("COMPUTERNAME").unwrap_or_default())
+}
+
+/// The 4 characters both people compare when pairing: from the id of the PC that is asked, the id of the PC that
+/// asks, and a random number the asking PC chose (so nobody can prepare a matching key in advance). No 0/O/1/I.
+fn verify_code(asked: &EndpointId, asking: &EndpointId, nonce: &str) -> String {
+    const ABC: &[u8; 32] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    let h = Sha256::new().chain_update(asked.to_string()).chain_update(asking.to_string()).chain_update(nonce).finalize();
+    h[..4].iter().map(|&b| ABC[b as usize % 32] as char).collect()
+}
+
+/// 16 random hex characters (from a fresh key: the key generator is the random source already at hand).
+fn new_nonce() -> String {
+    SecretKey::generate().to_bytes().iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
 /// A name from another PC is text to show, nothing more: no separators, no control characters, short.
@@ -147,12 +206,16 @@ fn parse_reply(text: &str, peer: &str) -> Vec<Hit> {
 struct Pairing {
     /// "Allow a new PC" is open until then
     until: Option<Instant>,
-    /// a PC that asked and waits for an answer: its name and code
-    request: Option<(String, EndpointId)>,
+    /// a PC that asked and waits for an answer: its name, its code and the verification code
+    request: Option<(String, EndpointId, String)>,
     answer: Option<bool>,
 }
 
 static PAIRING: StdMutex<Pairing> = StdMutex::new(Pairing { until: None, request: None, answer: None });
+
+/// The verification code of the pairing this PC started (shown while it waits), and the last PC paired here.
+static OUTGOING: StdMutex<String> = StdMutex::new(String::new());
+static LAST_PAIRED: StdMutex<String> = StdMutex::new(String::new());
 
 #[derive(Serialize)]
 pub struct PairState {
@@ -160,6 +223,10 @@ pub struct PairState {
     pub open: bool,
     pub name: String,
     pub code: String,
+    /// the 4-character verification code of the pairing in progress (either side), empty if none
+    pub check: String,
+    /// name of the last PC that was paired with this one since lisdir started, empty if none
+    pub done: String,
 }
 
 /// Is the feature running (so that pairing can work)?
@@ -178,8 +245,10 @@ pub fn open_pairing() -> bool {
 
 pub fn pairing_state() -> PairState {
     let p = PAIRING.lock().unwrap();
-    let (name, code) = p.request.as_ref().map_or((String::new(), String::new()), |(n, id)| (n.clone(), id.to_string()));
-    PairState { running: running(), open: p.until.is_some_and(|t| t > Instant::now()), name, code }
+    let (name, code, check) = p.request.as_ref().map_or_else(Default::default, |(n, id, c)| (n.clone(), id.to_string(), c.clone()));
+    let check = if check.is_empty() { OUTGOING.lock().unwrap().clone() } else { check };
+    let done = LAST_PAIRED.lock().unwrap().clone();
+    PairState { running: running(), open: p.until.is_some_and(|t| t > Instant::now()), name, code, check, done }
 }
 
 /// The person's answer to the request on screen.
@@ -195,13 +264,13 @@ pub fn close_pairing() {
 }
 
 /// A new PC asks to be paired: wait for the person here to answer. Only one request at a time, only while open.
-async fn pair_request(name: &str, id: EndpointId) -> bool {
+async fn pair_request(name: &str, id: EndpointId, check: String) -> bool {
     {
         let mut p = PAIRING.lock().unwrap();
         if !p.until.is_some_and(|t| t > Instant::now()) || p.request.is_some() {
             return false;
         }
-        (p.request, p.answer) = (Some((name.to_string(), id)), None);
+        (p.request, p.answer) = (Some((name.to_string(), id, check)), None);
     }
     let end = Instant::now() + PAIR_ANSWER;
     let mut accepted = false;
@@ -227,9 +296,17 @@ async fn pair_over(ep: &Endpoint, trust: &Trust, code: &str) -> Result<String, S
     if id == ep.id() {
         return Err("that is the code of this PC".into());
     }
+    let nonce = new_nonce();
+    *OUTGOING.lock().unwrap() = verify_code(&id, &ep.id(), &nonce);
+    let result = pair_talk(ep, trust, id, &nonce).await;
+    OUTGOING.lock().unwrap().clear();
+    result
+}
+
+async fn pair_talk(ep: &Endpoint, trust: &Trust, id: EndpointId, nonce: &str) -> Result<String, String> {
     let conn = timeout(CONNECT, ep.connect(id, ALPN)).await.map_err(|_| "no answer from that PC")?.map_err(|_| "cannot reach that PC")?;
     let (mut send, mut recv) = conn.open_bi().await.map_err(|e| e.to_string())?;
-    send.write_all(format!("PAIR\t{}", trust.name).as_bytes()).await.map_err(|e| e.to_string())?;
+    send.write_all(format!("PAIR\t{}\t{nonce}", trust.name).as_bytes()).await.map_err(|e| e.to_string())?;
     send.finish().map_err(|e| e.to_string())?;
     let reply = timeout(PAIR_ANSWER + Duration::from_secs(10), recv.read_to_end(MAX_QUERY)).await.map_err(|_| "no answer from that PC")?.map_err(|_| "that PC refused")?;
     let reply = String::from_utf8_lossy(&reply).into_owned();
@@ -256,7 +333,7 @@ pub fn start(peers: Vec<(String, EndpointId)>, search: Search, paired: Paired) {
     let _ = PAIRED.set(paired);
     tauri::async_runtime::spawn(async move {
         let Ok(ep) = Endpoint::builder(presets::N0).secret_key(secret()).alpns(vec![ALPN.to_vec()]).bind().await else { return };
-        let trust = Arc::new(Trust { list: RwLock::new(peers), name: my_name(), seen: StdMutex::default() });
+        let trust = Arc::new(Trust { list: RwLock::new(peers), name: my_name(), me: ep.id(), seen: StdMutex::default() });
         let peers = Arc::new(Peers { ep: ep.clone(), trust: trust.clone(), links: StdMutex::default() });
         let _ = PEERS.set(peers.clone());
         // connect now, so the first search already has its connections
@@ -287,11 +364,15 @@ async fn serve(conn: Connection, trust: Arc<Trust>, search: Search) {
     while let Ok((mut send, mut recv)) = conn.accept_bi().await {
         let Ok(msg) = recv.read_to_end(MAX_QUERY).await else { return };
         let msg = String::from_utf8_lossy(&msg).into_owned();
-        let reply = if let Some(name) = msg.strip_prefix("PAIR\t") {
+        let reply = if let Some(rest) = msg.strip_prefix("PAIR\t") {
+            let (name, nonce) = rest.split_once('\t').unwrap_or((rest, ""));
             let name = clean_name(name);
-            if trust.has(&who) || pair_request(&name, who).await {
+            // a request without the random number (an older lisdir) cannot be verified: refused
+            let valid = (8..=32).contains(&nonce.len()) && nonce.bytes().all(|b| b.is_ascii_hexdigit());
+            if trust.has(&who) || (valid && pair_request(&name, who, verify_code(&trust.me, &who, nonce)).await) {
                 if !trust.has(&who) {
                     trust.add(&name, who);
+                    *LAST_PAIRED.lock().unwrap() = name.clone();
                     if let Some(done) = PAIRED.get() {
                         done(&name, &who.to_string());
                     }
@@ -403,6 +484,26 @@ mod tests {
     }
 
     #[test]
+    fn verify_code_is_four_clear_characters_that_change_with_every_input() {
+        let (a, b) = (SecretKey::from_bytes(&[1; 32]).public(), SecretKey::from_bytes(&[2; 32]).public());
+        let c = verify_code(&a, &b, "00112233aabbccdd");
+        assert!(c.len() == 4 && c.chars().all(|x| x.is_ascii_alphanumeric() && !"01OI".contains(x)), "{c}");
+        assert_eq!(c, verify_code(&a, &b, "00112233aabbccdd"));
+        assert_ne!(c, verify_code(&a, &b, "00112233aabbccde"));
+        assert_ne!(c, verify_code(&b, &a, "00112233aabbccdd"));
+        assert_eq!(new_nonce().len(), 16);
+    }
+
+    #[test]
+    fn the_key_is_sealed_with_dpapi_and_comes_back() {
+        let key = [7u8; 32];
+        let sealed = dpapi(&key, true).expect("DPAPI works for the logged-in user");
+        assert!(sealed.len() > 32 && !sealed.windows(32).any(|w| w == key), "the sealed file does not hold the key as it is");
+        assert_eq!(dpapi(&sealed, false).unwrap(), key);
+        assert!(dpapi(&key, false).is_none(), "plain bytes are not a sealed blob");
+    }
+
+    #[test]
     fn names_from_other_pcs_are_made_safe() {
         assert_eq!(clean_name("Home|PC\n\t"), "HomePC");
         assert_eq!(clean_name(" \n"), "PC");
@@ -441,8 +542,8 @@ mod tests {
         rt.block_on(async {
             let (ks, kc, ke) = (SecretKey::generate(), SecretKey::generate(), SecretKey::generate());
             let (server, client, stranger) = (bind(ks).await, bind(kc.clone()).await, bind(ke.clone()).await);
-            let trust_s = Arc::new(Trust { list: RwLock::new(vec![("Client".into(), kc.public())]), name: "Server".into(), seen: StdMutex::default() });
-            let trust_e = Trust { list: RwLock::new(vec![]), name: "Stranger".into(), seen: StdMutex::default() };
+            let trust_s = Arc::new(Trust { list: RwLock::new(vec![("Client".into(), kc.public())]), name: "Server".into(), me: server.id(), seen: StdMutex::default() });
+            let trust_e = Trust { list: RwLock::new(vec![]), name: "Stranger".into(), me: stranger.id(), seen: StdMutex::default() };
             let search: Search = Arc::new(|q| vec![Hit::new(format!("{q}.txt"), format!(r"C:\{q}.txt"), false, 1.0).with_size(3)]);
             let addr = server.addr();
             let (srv, t, s) = (server.clone(), trust_s.clone(), search.clone());
@@ -471,6 +572,8 @@ mod tests {
                     let st = pairing_state();
                     if !st.name.is_empty() {
                         assert_eq!(st.name, "Stranger");
+                        assert_eq!(st.check.len(), 4, "the person is shown a verification code");
+                        assert_eq!(st.check, *OUTGOING.lock().unwrap(), "both PCs show the same verification code");
                         return answer_pairing(true);
                     }
                 }
@@ -483,6 +586,7 @@ mod tests {
             let conn = stranger.connect(addr.clone(), ALPN).await.unwrap();
             assert!(ask_once(&conn, b"x").await.is_ok());
             assert!(!pairing_state().open);
+            assert_eq!(pairing_state().done, "Stranger", "the pairing is reported");
             assert!(pair_over(&stranger, &trust_e, "garbage").await.is_err());
         });
     }
