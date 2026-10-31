@@ -6,7 +6,6 @@
 //! then `E\t<busy 0|1>\t<item count>\n`. An empty query returns only the `E` line (a status probe). `Q\n` makes
 //! the helper exit.
 use crate::{engine::{self, wide, NO_WINDOW}, query::{Clock, Query}};
-use serde::Serialize;
 use std::{
     fs::{File, OpenOptions},
     io::{BufRead, BufReader, Write},
@@ -36,7 +35,7 @@ const TASK: &str = "lisdir-helper";
 pub type Shared = Arc<RwLock<engine::Volume>>;
 pub type Volumes = Arc<RwLock<Vec<Shared>>>;
 
-#[derive(Serialize)]
+#[derive(Clone)]
 pub struct Hit {
     pub name: String,
     pub path: String,
@@ -53,7 +52,6 @@ pub struct Hit {
     pub pinned: bool,
     /// name of the other PC this result lives on; empty for this PC
     pub peer: String,
-    #[serde(skip)]
     pub score: f32,
 }
 

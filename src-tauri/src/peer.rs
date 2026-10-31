@@ -13,7 +13,6 @@
 //! the other in its list. A PC that is not in the list and is not being paired is closed on at once.
 use crate::service::Hit;
 use iroh::{endpoint::{presets, Connection}, Endpoint, EndpointId, SecretKey};
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -217,9 +216,7 @@ static PAIRING: StdMutex<Pairing> = StdMutex::new(Pairing { until: None, request
 static OUTGOING: StdMutex<String> = StdMutex::new(String::new());
 static LAST_PAIRED: StdMutex<String> = StdMutex::new(String::new());
 
-#[derive(Serialize)]
 pub struct PairState {
-    pub running: bool,
     pub open: bool,
     pub name: String,
     pub code: String,
@@ -227,6 +224,12 @@ pub struct PairState {
     pub check: String,
     /// name of the last PC that was paired with this one since lisdir started, empty if none
     pub done: String,
+}
+
+/// The async runtime, built the first time it is needed: with the option off it never starts.
+pub fn rt() -> &'static tokio::runtime::Runtime {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("runtime"))
 }
 
 /// Is the feature running (so that pairing can work)?
@@ -248,7 +251,7 @@ pub fn pairing_state() -> PairState {
     let (name, code, check) = p.request.as_ref().map_or_else(Default::default, |(n, id, c)| (n.clone(), id.to_string(), c.clone()));
     let check = if check.is_empty() { OUTGOING.lock().unwrap().clone() } else { check };
     let done = LAST_PAIRED.lock().unwrap().clone();
-    PairState { running: running(), open: p.until.is_some_and(|t| t > Instant::now()), name, code, check, done }
+    PairState { open: p.until.is_some_and(|t| t > Instant::now()), name, code, check, done }
 }
 
 /// The person's answer to the request on screen.
@@ -331,7 +334,7 @@ pub async fn pair(code: String) -> Result<String, String> {
 /// Start sharing this PC and asking the others. `peers` is the list of trusted PCs.
 pub fn start(peers: Vec<(String, EndpointId)>, search: Search, paired: Paired) {
     let _ = PAIRED.set(paired);
-    tauri::async_runtime::spawn(async move {
+    rt().spawn(async move {
         let Ok(ep) = Endpoint::builder(presets::N0).secret_key(secret()).alpns(vec![ALPN.to_vec()]).bind().await else { return };
         let trust = Arc::new(Trust { list: RwLock::new(peers), name: my_name(), me: ep.id(), seen: StdMutex::default() });
         let peers = Arc::new(Peers { ep: ep.clone(), trust: trust.clone(), links: StdMutex::default() });
@@ -339,11 +342,11 @@ pub fn start(peers: Vec<(String, EndpointId)>, search: Search, paired: Paired) {
         // connect now, so the first search already has its connections
         for (name, id) in trust.list.read().unwrap().clone() {
             let peers = peers.clone();
-            tauri::async_runtime::spawn(async move { ask(&peers, &name, id, " ").await });
+            rt().spawn(async move { ask(&peers, &name, id, " ").await });
         }
         while let Some(incoming) = ep.accept().await {
             let (trust, search) = (trust.clone(), search.clone());
-            tauri::async_runtime::spawn(async move {
+            rt().spawn(async move {
                 if let Ok(conn) = incoming.await {
                     serve(conn, trust, search).await;
                 }
@@ -384,7 +387,7 @@ async fn serve(conn: Connection, trust: Arc<Trust>, search: Search) {
         } else if trust.has(&who) {
             trust.saw(who);
             let s = search.clone();
-            let hits = tauri::async_runtime::spawn_blocking(move || s(&msg)).await.unwrap_or_default();
+            let hits = rt().spawn_blocking(move || s(&msg)).await.unwrap_or_default();
             format_reply(&hits)
         } else {
             conn.close(1u32.into(), b"unknown PC");
@@ -421,10 +424,8 @@ async fn ask(peers: &Peers, name: &str, id: EndpointId, q: &str) -> Option<Vec<H
     result
 }
 
-#[derive(Serialize)]
 pub struct PeerState {
     pub name: String,
-    pub code: String,
     /// a working connection to it right now
     pub online: bool,
     /// seconds since it last answered or asked; None if never since lisdir started
@@ -443,10 +444,10 @@ pub fn status() -> Vec<PeerState> {
             let online = link.is_some_and(|l| l.try_lock().is_ok_and(|l| l.conn.as_ref().is_some_and(|c| c.close_reason().is_none())));
             if !online {
                 let (peers, name) = (peers.clone(), name.clone());
-                tauri::async_runtime::spawn(async move { ask(&peers, &name, id, " ").await });
+                rt().spawn(async move { ask(&peers, &name, id, " ").await });
             }
             let seen = peers.trust.seen.lock().unwrap().get(&id).map(|t| t.elapsed().as_secs());
-            PeerState { name, code: id.to_string(), online, seen }
+            PeerState { name, online, seen }
         })
         .collect()
 }
@@ -460,7 +461,7 @@ pub async fn search(q: String) -> Vec<Hit> {
         .into_iter()
         .map(|(name, id)| {
             let (peers, q) = (peers.clone(), q.clone());
-            tauri::async_runtime::spawn(async move { ask(&peers, &name, id, &q).await.unwrap_or_default() })
+            rt().spawn(async move { ask(&peers, &name, id, &q).await.unwrap_or_default() })
         })
         .collect();
     let mut all = vec![];

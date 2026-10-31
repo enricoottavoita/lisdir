@@ -2,7 +2,6 @@
 //! A missing file or key means the default; an unreadable value is ignored, so a hand-edited file never breaks startup.
 //! The list settings (`folder`, `disk_off`, `no_index`, `exclude`) are written one line per entry.
 use crate::engine::data_dir;
-use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::atomic::{AtomicU8, Ordering}};
 
 pub const THEMES: &[&str] = &["auto", "dark", "light", "midnight", "paper"];
@@ -14,7 +13,7 @@ const MAX_LINE: usize = 260;
 /// 0 = follow Windows, 1 = English, 2 = Italian. A global so the free `t()` helper can read it from anywhere.
 pub static LANGUAGE: AtomicU8 = AtomicU8::new(0);
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     /// global shortcut that opens the bar, e.g. `alt+space`
     pub hotkey: String,
@@ -39,6 +38,8 @@ pub struct Settings {
     pub peers_on: bool,
     /// trusted PCs, one `Name|code` per line
     pub peers: Vec<String>,
+    /// the preview pane of the bar is open (`Alt+P`, remembered)
+    pub preview: bool,
 }
 
 impl Default for Settings {
@@ -56,6 +57,7 @@ impl Default for Settings {
             exclude: vec![],
             peers_on: false,
             peers: vec![],
+            preview: false,
         }
     }
 }
@@ -96,6 +98,55 @@ pub fn hotkey_problem(hotkey: &str) -> Option<&'static str> {
     None
 }
 
+/// Named keys of a shortcut and their virtual-key codes (letters, digits and function keys are worked out).
+const KEYS: &[(&str, u32)] = &[
+    ("space", 0x20), ("enter", 0x0D), ("tab", 0x09), ("up", 0x26), ("down", 0x28), ("left", 0x25), ("right", 0x27),
+    ("backquote", 0xC0), ("comma", 0xBC), ("period", 0xBE), ("slash", 0xBF), ("semicolon", 0xBA), ("quote", 0xDE),
+    ("minus", 0xBD), ("equal", 0xBB), ("bracketleft", 0xDB), ("bracketright", 0xDD), ("backslash", 0xDC),
+    ("home", 0x24), ("end", 0x23), ("pageup", 0x21), ("pagedown", 0x22), ("insert", 0x2D), ("delete", 0x2E),
+    ("backspace", 0x08), ("escape", 0x1B),
+];
+
+/// The virtual-key code of a key name: `k`, `7`, `f9`, `space`.
+fn key_code(name: &str) -> Option<u32> {
+    let name = name.strip_prefix("key").or(name.strip_prefix("digit")).filter(|n| n.len() == 1).unwrap_or(name);
+    if let [c] = name.as_bytes() {
+        if c.is_ascii_alphanumeric() {
+            return Some(c.to_ascii_uppercase() as u32);
+        }
+    }
+    if let Some(n) = name.strip_prefix('f').and_then(|n| n.parse::<u32>().ok()).filter(|n| (1..=24).contains(n)) {
+        return Some(0x6F + n); // VK_F1 is 0x70
+    }
+    KEYS.iter().find(|(k, _)| *k == name).map(|(_, vk)| *vk)
+}
+
+/// The name of a virtual key in a shortcut, None for a key that cannot be one (a bare modifier).
+pub fn key_name(vk: u32) -> Option<String> {
+    match vk {
+        0x30..=0x39 | 0x41..=0x5A => Some((vk as u8 as char).to_ascii_lowercase().to_string()),
+        0x70..=0x87 => Some(format!("f{}", vk - 0x6F)),
+        _ => KEYS.iter().find(|(_, v)| *v == vk).map(|(k, _)| k.to_string()),
+    }
+}
+
+/// A shortcut as `RegisterHotKey` wants it: modifiers (MOD_ALT 1, MOD_CONTROL 2, MOD_SHIFT 4, MOD_WIN 8) and virtual key.
+pub fn hotkey_keys(hotkey: &str) -> Option<(u32, u32)> {
+    let parts: Vec<String> = hotkey.split('+').map(|p| p.trim().to_lowercase()).collect();
+    let (key, mods) = parts.split_last()?;
+    let mut bits = 0;
+    for m in mods {
+        bits |= match m.as_str() {
+            "alt" => 1,
+            "ctrl" | "control" => 2,
+            "shift" => 4,
+            "super" | "win" | "meta" | "cmd" => 8,
+            _ => return None,
+        };
+    }
+    Some((bits, key_code(key)?))
+}
+
 /// Trim, drop empty lines and duplicates, and cap the length.
 fn clean(list: &[String]) -> Vec<String> {
     let mut out: Vec<String> = vec![];
@@ -127,6 +178,7 @@ impl Settings {
                 "exclude" => hide.push(v.to_string()),
                 "peers_on" => s.peers_on = truthy(v).unwrap_or(s.peers_on),
                 "peer" => peers.push(v.to_string()),
+                "preview" => s.preview = truthy(v).unwrap_or(s.preview),
                 _ => {}
             }
         }
@@ -137,8 +189,8 @@ impl Settings {
     pub fn to_text(&self) -> String {
         let b = |v: bool| if v { 1 } else { 0 };
         let mut t = format!(
-            "# lisdir settings (edited from the tray menu: Settings…)\nhotkey={}\nlanguage={}\ntheme={}\nhide_tray={}\ncheck_updates={}\ntype_search={}\npeers_on={}\n",
-            self.hotkey, self.language, self.theme, b(self.hide_tray), b(self.check_updates), b(self.type_search), b(self.peers_on)
+            "# lisdir settings (edited from the tray menu: Settings…)\nhotkey={}\nlanguage={}\ntheme={}\nhide_tray={}\ncheck_updates={}\ntype_search={}\npeers_on={}\npreview={}\n",
+            self.hotkey, self.language, self.theme, b(self.hide_tray), b(self.check_updates), b(self.type_search), b(self.peers_on), b(self.preview)
         );
         for (key, list) in [("folder", &self.folders), ("disk_off", &self.disks_off), ("no_index", &self.no_index), ("exclude", &self.exclude), ("peer", &self.peers)] {
             for item in list {
@@ -225,7 +277,7 @@ mod tests {
             hotkey: "ctrl+alt+k".into(), language: "it".into(), theme: "midnight".into(), hide_tray: true, check_updates: false,
             type_search: false, folders: vec![r"\\nas\share".into(), r"E:\Photos".into()], disks_off: vec!["D".into()],
             no_index: vec!["node_modules".into(), "*.tmp".into()], exclude: vec![r"C:\Windows".into()],
-            peers_on: true, peers: vec!["Office|abc".into()],
+            peers_on: true, peers: vec!["Office|abc".into()], preview: true,
         };
         assert_eq!(Settings::parse(&s.to_text()), s);
     }
@@ -245,6 +297,23 @@ mod tests {
         let off = Settings { disks_off: vec!["d:".into(), "bad".into()], ..Settings::default() }.checked().unwrap();
         assert!(off.disk_is_off('d') && off.disk_is_off('D') && !off.disk_is_off('C'));
         assert!(off.index_differs(&Settings::default()) && !Settings::default().index_differs(&Settings::default()));
+    }
+
+    #[test]
+    fn shortcuts_become_key_codes_and_back() {
+        assert_eq!(hotkey_keys("alt+space"), Some((1, 0x20)));
+        assert_eq!(hotkey_keys("Ctrl+Shift+K"), Some((2 | 4, 0x4B)));
+        assert_eq!(hotkey_keys("super+7"), Some((8, 0x37)));
+        assert_eq!(hotkey_keys("f9"), Some((0, 0x78)));
+        assert_eq!(hotkey_keys("ctrl+keyp"), Some((2, 0x50)));
+        assert_eq!(hotkey_keys("ctrl+digit1"), Some((2, 0x31)));
+        assert_eq!(hotkey_keys("ctrl+f25"), None);
+        assert_eq!(hotkey_keys("hyper+a"), None);
+        assert_eq!(hotkey_keys("ctrl+nosuchkey"), None);
+        for vk in [0x20, 0x41, 0x5A, 0x30, 0x70, 0x87, 0xBC, 0xC0] {
+            assert_eq!(hotkey_keys(&key_name(vk).unwrap()).unwrap().1, vk);
+        }
+        assert_eq!(key_name(0x11), None); // Ctrl alone
     }
 
     #[test]

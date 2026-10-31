@@ -5,7 +5,7 @@
 Una barra di ricerca e lanciatore di app veloce e open source per Windows. Premi **Alt+Spazio** (oppure inizia a
 scrivere in una cartella di Esplora risorse o sul Desktop) e trova file, cartelle e app del computer mentre scrivi.
 
-Scritto in Rust con interfaccia [Tauri](https://tauri.app). Licenza MIT.
+Scritto in Rust, con interfaccia nativa Win32 e Direct2D. Licenza MIT.
 
 ## Funzioni
 
@@ -155,7 +155,7 @@ di permesso; la cartella deve essere scrivibile).
 ## Compilare
 
 Servono Windows 10/11 (64 bit), la toolchain [Rust](https://rustup.rs) (MSVC), gli strumenti di compilazione di Visual
-Studio (carico di lavoro C++) e WebView2 (già presente su Windows 11).
+Studio (carico di lavoro C++).
 
 ```
 cd src-tauri

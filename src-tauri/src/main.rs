@@ -1,14 +1,18 @@
 #![cfg_attr(not(any(debug_assertions, test)), windows_subsystem = "windows")]
 mod actions;
 mod apps;
+mod bar;
 mod engine;
+mod gfx;
 mod icons;
 mod mft;
 mod peer;
+mod prefs;
 mod query;
 mod rules;
 mod service;
 mod settings;
+mod tray;
 mod typesearch;
 mod update;
 mod usage;
@@ -17,14 +21,9 @@ use query::{Clock, Query};
 use service::{Hit, Shared, Volumes};
 use std::{
     os::windows::process::CommandExt,
-    sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Arc, RwLock},
+    sync::{atomic::{AtomicUsize, Ordering}, Arc, OnceLock, RwLock},
 };
-use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State, WebviewWindow, WindowEvent,
-};
-use tauri_plugin_global_shortcut::{Builder as Shortcuts, GlobalShortcutExt, ShortcutState};
+use windows_sys::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, TranslateMessage};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -42,12 +41,8 @@ struct App {
     usage: std::sync::Mutex<usage::Usage>,
     /// pinned items, listed first; kept in the same file format as `usage` (newest pin first)
     pins: std::sync::Mutex<usage::Usage>,
-    /// rendered icons by `icons::key`. ponytail: unbounded, but one entry per file type (plus one per program/shortcut shown).
-    icons: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
     /// number of network walks in progress; non-zero shows "Indexing…"
     busy: Arc<AtomicUsize>,
-    /// set once the window really got focus after being shown; blur before that is a foreground-lock glitch, not a click-away
-    focused: AtomicBool,
     /// a newer release found by the update check, waiting for the user to accept it
     update: std::sync::Mutex<Option<update::Update>>,
     settings: RwLock<settings::Settings>,
@@ -55,8 +50,11 @@ struct App {
     launched: settings::Settings,
 }
 
-/// The two tray check items, so that the settings window can keep them in step.
-static CHECKS: std::sync::OnceLock<(tauri::menu::CheckMenuItem<tauri::Wry>, tauri::menu::CheckMenuItem<tauri::Wry>)> = std::sync::OnceLock::new();
+static APP: OnceLock<App> = OnceLock::new();
+
+fn app() -> &'static App {
+    APP.get().expect("set at the start of main")
+}
 
 /// Keep a network volume current by periodically re-walking it. It is searchable from the cache
 /// (or empty) right away; a first walk of a big share can take minutes.
@@ -172,7 +170,6 @@ fn shared_files(app: &App, q: &str) -> Vec<Hit> {
 }
 
 /// The same search on the other PCs, asked after the local answer is on screen. Empty when the feature is off.
-#[tauri::command]
 async fn remote_search(q: String) -> Vec<Hit> {
     if q.trim().is_empty() {
         return vec![];
@@ -183,53 +180,13 @@ async fn remote_search(q: String) -> Vec<Hit> {
     hits
 }
 
-/// This PC's code, to give to the other PC.
-#[tauri::command]
-fn peer_code() -> String {
-    peer::my_code()
-}
-
-/// "Allow a new PC": for two minutes one PC may ask to be paired. False when the option is not running.
-#[tauri::command]
-fn pair_open() -> bool {
-    peer::open_pairing()
-}
-
-/// What the settings window shows while pairing: is it open, and who is asking.
-#[tauri::command]
-fn pair_state() -> peer::PairState {
-    peer::pairing_state()
-}
-
-/// The badge and the list of PCs in the settings: is the option running, and which PCs are connected.
-#[tauri::command]
-fn peer_status() -> (bool, Vec<peer::PeerState>) {
-    (peer::running(), peer::status())
-}
-
-#[tauri::command]
-fn pair_answer(accept: bool) {
-    peer::answer_pairing(accept);
-}
-
-#[tauri::command]
-fn pair_close() {
-    peer::close_pairing();
-}
-
-/// Ask the PC with this code to pair; its person confirms there. Returns that PC's name.
-#[tauri::command]
-async fn pair_with(code: String) -> Result<String, String> {
-    peer::pair(code).await
-}
-
-#[tauri::command]
-async fn search(q: String, app: State<'_, App>) -> Result<Vec<Hit>, String> {
-    let query = Query::parse(&q, &Clock::system());
+fn search(q: &str) -> Vec<Hit> {
+    let app = app();
+    let query = Query::parse(q, &Clock::system());
     if query.is_empty() {
-        return Ok(recents(&app));
+        return recents(app);
     }
-    let mut hits = files(&app, &q, &query);
+    let mut hits = files(app, q, &query);
     if query.wants_apps() {
         // an app found by name sits with the folders, ahead of the files
         let tier = if query.terms.is_empty() { 0.0 } else { engine::FIRST };
@@ -246,97 +203,65 @@ async fn search(q: String, app: State<'_, App>) -> Result<Vec<Hit>, String> {
     hits.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.score.total_cmp(&a.score)));
     hits.truncate(20);
     hits.iter_mut().for_each(|h| h.hl = engine::highlight(&query, &h.name));
-    Ok(hits)
+    hits
+}
+
+/// Seconds since 1970, for the lists of what you open.
+fn now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Pin a result so it is listed first, or unpin it.
-#[tauri::command]
-fn pin(path: String, name: String, is_dir: bool, app: bool, state: State<App>) {
-    let mut pins = state.pins.lock().unwrap();
-    if pins.has(&path) {
-        pins.forget(&path);
+fn pin(h: &Hit) {
+    let mut pins = app().pins.lock().unwrap();
+    if pins.has(&h.path) {
+        pins.forget(&h.path);
     } else {
-        pins.record(&path, &name, is_dir, app, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64));
+        pins.record(&h.path, &h.name, h.is_dir, h.app, now());
     }
 }
 
-/// Preview of a result: b't' + the start of a text file, or b'i' + a BMP (the shell's thumbnail or big icon).
-#[tauri::command]
-async fn preview(path: String, is_dir: bool) -> Result<tauri::ipc::Response, String> {
-    Ok(tauri::ipc::Response::new(match (!is_dir).then(|| actions::text_start(&path)).flatten() {
-        Some(text) => [b"t".as_slice(), text.as_bytes()].concat(),
-        None => [b"i".as_slice(), &icons::thumbnail_image(&path, 512).ok_or("no preview")?].concat(),
-    }))
-}
-
-/// Show or hide the preview pane: the bar gets wider so the list keeps its width.
-#[tauri::command]
-fn pane(on: bool, w: WebviewWindow) {
-    let _ = w.set_size(tauri::LogicalSize::new(if on { 1100.0 } else { 700.0 }, 440.0));
-    let _ = w.center();
-}
-
 /// Take an item out of the recent list (and out of the habit boost); no path clears them all.
-#[tauri::command]
-fn forget(path: Option<String>, app: State<App>) {
-    let mut usage = app.usage.lock().unwrap();
+fn forget(path: Option<&str>) {
+    let mut usage = app().usage.lock().unwrap();
     match path {
-        Some(p) => usage.forget(&p),
+        Some(p) => usage.forget(p),
         None => usage.clear(),
     }
 }
 
 /// (indexing in progress, item count, helper reachable)
-#[tauri::command]
-async fn status(app: State<'_, App>) -> Result<(bool, usize, bool), String> {
+fn status() -> (bool, usize, bool) {
+    let app = app();
     let (busy, count) = (app.busy.load(Ordering::SeqCst) > 0, service::count(&app.network));
-    Ok(match service::query("") {
+    match service::query("") {
         Some(r) => (busy || r.busy, count + r.count, true),
         None => (busy, count, false),
-    })
+    }
 }
 
 /// folder=true reveals the item in Explorer, otherwise opens it with its default app.
-#[tauri::command]
-fn open(path: String, folder: bool, name: String, is_dir: bool, app: bool, state: State<App>) {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    state.usage.lock().unwrap().record(&path, &name, is_dir, app, now);
+fn open(h: &Hit, folder: bool) {
+    let path = &h.path;
+    app().usage.lock().unwrap().record(path, &h.name, h.is_dir, h.app, now());
     if folder {
         let _ = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
     } else {
         // ShellExecute, like double-clicking in Explorer: no console window flashing up (unlike `cmd /c start`).
-        let (verb, file) = (engine::wide("open"), engine::wide(&path));
+        let (verb, file) = (engine::wide("open"), engine::wide(path));
         unsafe { windows_sys::Win32::UI::Shell::ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), 1 /* SW_SHOWNORMAL */) };
     }
 }
 
 /// The action menu: "copy" / "cut" (the file, as in Explorer), "path", "openas", "terminal", "properties".
-#[tauri::command]
-fn act(action: String, path: String, is_dir: bool, w: WebviewWindow) {
-    let _ = w.hide(); // first, so the dialog or terminal comes to the front
-    match action.as_str() {
-        "copy" | "cut" => { actions::copy_file(&path, action == "cut"); }
-        "path" => { actions::copy_text(&path); }
-        "terminal" => actions::terminal(&path, is_dir),
-        v @ ("openas" | "properties") => actions::verb(v, &path),
+fn act(action: &str, h: &Hit) {
+    match action {
+        "copy" | "cut" => { actions::copy_file(&h.path, action == "cut"); }
+        "path" => { actions::copy_text(&h.path); }
+        "terminal" => actions::terminal(&h.path, h.is_dir),
+        v @ ("openas" | "properties") => actions::verb(v, &h.path),
         _ => {}
     }
-}
-
-/// BMP of the shell icon for a result (`key` is `Hit::icon`). Raw bytes, no base64.
-#[tauri::command]
-async fn icon(key: String, path: String, app: State<'_, App>) -> Result<tauri::ipc::Response, String> {
-    if let Some(img) = app.icons.lock().unwrap().get(&key) {
-        return Ok(tauri::ipc::Response::new(img.clone()));
-    }
-    let img = icons::icon_image(&key, &path).ok_or("no icon")?;
-    app.icons.lock().unwrap().insert(key, img.clone());
-    Ok(tauri::ipc::Response::new(img))
-}
-
-#[tauri::command]
-fn version() -> &'static str {
-    VERSION
 }
 
 /// Italian on an Italian Windows UI, else English. LISDIR_LANG=it|en overrides (handy for testing).
@@ -353,70 +278,34 @@ fn t(en: &'static str, it: &'static str) -> &'static str {
     if italian() { it } else { en }
 }
 
-#[tauri::command]
-fn lang() -> &'static str {
-    t("en", "it")
-}
-
-#[tauri::command]
-fn get_settings(app: State<App>) -> settings::Settings {
-    app.settings.read().unwrap().clone()
-}
-
 /// Apply and save settings from the settings window. Errors are shown there, so they are plain sentences. The answer
 /// says whether a restart is needed for the indexing choices (disks, folders, rules) to take effect.
-#[tauri::command]
-fn save_settings(new: settings::Settings, app: AppHandle) -> Result<bool, String> {
+fn save_settings(new: settings::Settings) -> Result<bool, String> {
     let new = new.checked()?;
-    let state = app.state::<App>();
-    let old = state.settings.read().unwrap().clone();
+    let app = app();
+    let old = app.settings.read().unwrap().clone();
     if new.hotkey != old.hotkey {
-        // register the new one first, so a shortcut that is taken by another program leaves the old one working
-        app.global_shortcut().register(new.hotkey.as_str()).map_err(|e| format!("shortcut: {e}"))?;
-        let _ = app.global_shortcut().unregister(old.hotkey.as_str());
+        tray::set_hotkey(&new.hotkey).map_err(|e| format!("shortcut: {e}"))?;
     }
     new.save().map_err(|e| format!("cannot save: {e}"))?;
     new.apply_language();
     typesearch::ENABLED.store(new.type_search, Ordering::SeqCst);
-    if let Some((type_search, _)) = CHECKS.get() {
-        let _ = type_search.set_checked(new.type_search);
-    }
-    if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_visible(!new.hide_tray);
-    }
+    tray::set_visible(!new.hide_tray);
     peer::set_peers(new.peers.iter().filter_map(|l| peer::parse_peer(l)).collect()); // the list applies at once
-    let restart = new.index_differs(&state.launched) || new.peers_differ(&state.launched);
-    *state.settings.write().unwrap() = new;
-    // the bar re-reads language and theme
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.eval("location.reload()");
-    }
+    let restart = new.index_differs(&app.launched) || new.peers_differ(&app.launched);
+    *app.settings.write().unwrap() = new;
+    bar::refresh();
     Ok(restart)
 }
 
-#[tauri::command]
-fn get_autostart() -> bool {
+fn autostart() -> bool {
     reg(&["query", RUN_KEY, "/v", "lisdir"])
 }
 
-#[tauri::command]
-fn set_autostart_cmd(on: bool) {
-    set_autostart(on);
-    if let Some((_, autostart)) = CHECKS.get() {
-        let _ = autostart.set_checked(on);
-    }
-}
-
-#[tauri::command]
-fn list_drives(app: State<App>) -> Vec<engine::Drive> {
-    engine::drives(&app.settings.read().unwrap().disks_off)
-}
-
 /// Restart lisdir (and its helper) so the indexing choices apply. The new copy waits for this one to exit.
-#[tauri::command]
-fn restart_app(app: AppHandle) {
-    let state = app.state::<App>();
-    let wipe = state.settings.read().unwrap().no_index != state.launched.no_index;
+fn restart_app() {
+    let app = app();
+    let wipe = app.settings.read().unwrap().no_index != app.launched.no_index;
     service::stop_helper_and_wait();
     if wipe {
         engine::wipe_local_caches(); // what a removed or changed "do not index" rule had left out must be found again
@@ -424,7 +313,7 @@ fn restart_app(app: AppHandle) {
     if let Ok(exe) = std::env::current_exe() {
         let _ = std::process::Command::new(exe).arg("--restart-after").arg(std::process::id().to_string()).spawn();
     }
-    app.exit(0);
+    tray::quit();
 }
 
 /// `--restart-after <pid>`: wait (up to 10 s) for the copy that started us to exit, so its shortcut is free.
@@ -436,77 +325,6 @@ fn wait_for_exit(pid: u32) {
             WaitForSingleObject(h, 10_000);
             CloseHandle(h);
         }
-    }
-}
-
-/// Open the settings window (or bring it forward).
-fn open_settings(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.show();
-        let _ = w.set_focus();
-        return;
-    }
-    let title = t("lisdir settings", "Impostazioni di lisdir");
-    let built = tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("settings.html".into()))
-        .title(title)
-        .inner_size(560.0, 780.0)
-        .resizable(false)
-        .center()
-        .build();
-    if let Ok(w) = built {
-        let _ = w.set_focus();
-    }
-}
-
-/// The folder chooser of Windows, for the lists in the settings window. None if the user cancels.
-#[tauri::command]
-async fn pick_folder(w: WebviewWindow) -> Option<String> {
-    rfd::FileDialog::new()
-        .set_title(t("Choose a folder", "Scegli una cartella"))
-        .set_parent(&w)
-        .pick_folder()
-        .map(|p| p.to_string_lossy().trim_end_matches('\\').to_string())
-}
-
-#[tauri::command]
-fn close_window(w: WebviewWindow) {
-    let _ = w.close();
-}
-
-#[tauri::command]
-fn settings_window(app: AppHandle) {
-    open_settings(&app);
-}
-
-#[tauri::command]
-fn hide(w: WebviewWindow) {
-    let _ = w.hide();
-}
-
-#[tauri::command]
-fn take_pending() -> String {
-    typesearch::take()
-}
-
-/// Show and focus the bar if it is hidden.
-fn show(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        if !w.is_visible().unwrap_or(false) {
-            let _ = w.center();
-            app.state::<App>().focused.store(false, Ordering::SeqCst);
-            reload_apps(&app.state::<App>());
-            let _ = w.show();
-            let _ = w.set_focus();
-            // Tell the page it was just opened (the DOM focus event is not reliable on the first show).
-            let _ = w.eval("window.opened && window.opened()");
-        }
-    }
-}
-
-fn toggle(app: &AppHandle) {
-    match app.get_webview_window("main") {
-        Some(w) if w.is_visible().unwrap_or(false) => { let _ = w.hide(); }
-        _ => show(app),
     }
 }
 
@@ -536,41 +354,39 @@ fn set_autostart(on: bool) {
     }
 }
 
-type Item = MenuItem<tauri::Wry>;
-
-fn set_item(item: &Item, text: String, enabled: bool) {
-    let _ = item.set_text(text);
-    let _ = item.set_enabled(enabled);
-}
-
 /// Ask GitHub for a newer release and show the answer in the tray menu. Background checks stay quiet unless something is found.
-fn check_update(app: &AppHandle, item: &Item, manual: bool) {
+fn check_update(manual: bool) {
     if manual {
-        set_item(item, t("Checking for updates…", "Controllo aggiornamenti…").into(), false);
+        tray::set_update(t("Checking for updates…", "Controllo aggiornamenti…").into(), false);
     }
     match update::check() {
         Ok(Some(u)) => {
-            set_item(item, format!("{} {}…", t("Update to", "Aggiorna a"), u.version), true);
-            *app.state::<App>().update.lock().unwrap() = Some(u);
+            tray::set_update(format!("{} {}…", t("Update to", "Aggiorna a"), u.version), true);
+            *app().update.lock().unwrap() = Some(u);
         }
-        Ok(None) if manual => set_item(item, t("lisdir is up to date", "lisdir è aggiornato").into(), true),
-        Err(_) if manual => set_item(item, t("Update check failed – retry", "Controllo non riuscito – riprova").into(), true),
+        Ok(None) if manual => tray::set_update(t("lisdir is up to date", "lisdir è aggiornato").into(), true),
+        Err(_) if manual => tray::set_update(t("Update check failed – retry", "Controllo non riuscito – riprova").into(), true),
         _ => {}
     }
 }
 
 /// Download and start the installer (or swap in the new portable exe) for the update the user accepted, then quit
 /// so the new version can take over.
-fn install_update(app: &AppHandle, item: &Item) {
-    let Some(u) = app.state::<App>().update.lock().unwrap().take() else { return };
-    set_item(item, format!("{} {}…", t("Downloading", "Scarico"), u.version), false);
+fn install_update() {
+    let Some(u) = app().update.lock().unwrap().take() else { return };
+    tray::set_update(format!("{} {}…", t("Downloading", "Scarico"), u.version), false);
     match update::install(&u) {
-        Ok(()) => app.exit(0),
+        Ok(()) => tray::quit(),
         Err(_) => {
-            set_item(item, t("Update failed – retry", "Aggiornamento non riuscito – riprova").into(), true);
-            *app.state::<App>().update.lock().unwrap() = Some(u);
+            tray::set_update(t("Update failed – retry", "Aggiornamento non riuscito – riprova").into(), true);
+            *app().update.lock().unwrap() = Some(u);
         }
     }
+}
+
+/// The update item of the tray menu: install what was found, else look.
+fn update_clicked() {
+    if app().update.lock().unwrap().is_some() { install_update() } else { check_update(true) }
 }
 
 fn main() {
@@ -584,131 +400,44 @@ fn main() {
         wait_for_exit(pid);
     }
     update::cleanup();
-    // The bar is a short list and a text box: its web view needs no graphics card. Drawn by the processor and with the
-    // graphics part inside the browser process, the web view runs in one process fewer and takes about 20 MB less
-    // (measured). Every window must use the same arguments, so they are set here for all of them.
-    if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
-        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu --in-process-gpu");
-    }
     let loaded = settings::Settings::load();
     rules::set(&loaded.no_index, &loaded.exclude);
     typesearch::ENABLED.store(loaded.type_search, Ordering::SeqCst);
-    tauri::Builder::default()
-        .plugin(
-            Shortcuts::new()
-                .with_handler(|app, _, e| {
-                    if e.state() == ShortcutState::Pressed {
-                        toggle(app)
-                    }
-                })
-                .build(),
-        )
-        .manage(App { settings: RwLock::new(loaded.clone()), launched: loaded.clone(), ..Default::default() })
-        .setup(move |app| {
-            // the saved shortcut, or Alt+Space when it is taken by another program
-            if app.global_shortcut().register(loaded.hotkey.as_str()).is_err() {
-                let _ = app.global_shortcut().register("alt+space");
+    let _ = APP.set(App { settings: RwLock::new(loaded.clone()), launched: loaded.clone(), ..Default::default() });
+    let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) }; // the folder chooser
+    bar::create();
+    tray::start(&loaded);
+    start(app());
+    if loaded.peers_on {
+        peer::start(
+            loaded.peers.iter().filter_map(|l| peer::parse_peer(l)).collect(),
+            Arc::new(|q| shared_files(app(), q)),
+            Arc::new(|name, code| {
+                // a PC was just paired: keep it in the settings
+                let mut s = app().settings.write().unwrap();
+                s.add_peer(name, code);
+                let _ = s.save();
+            }),
+        );
+    }
+    typesearch::start();
+    std::thread::spawn(|| loop {
+        std::thread::sleep(std::time::Duration::from_secs(20)); // let startup settle first
+        if app().settings.read().unwrap().check_updates {
+            check_update(false);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(24 * 3600));
+    });
+    if std::env::args().any(|a| a == "--settings") {
+        prefs::open(); // `lisdir.exe --settings`
+    }
+    unsafe {
+        let mut m = std::mem::zeroed();
+        while GetMessageW(&mut m, std::ptr::null_mut(), 0, 0) > 0 {
+            if !bar::key(&m) && !prefs::key(&m) {
+                TranslateMessage(&m);
+                DispatchMessageW(&m);
             }
-            start(&app.state::<App>());
-            if loaded.peers_on {
-                let (h1, h2) = (app.handle().clone(), app.handle().clone());
-                peer::start(
-                    loaded.peers.iter().filter_map(|l| peer::parse_peer(l)).collect(),
-                    Arc::new(move |q| shared_files(&h1.state::<App>(), q)),
-                    Arc::new(move |name, code| {
-                        // a PC was just paired: keep it in the settings
-                        let state = h2.state::<App>();
-                        let mut s = state.settings.write().unwrap();
-                        s.add_peer(name, code);
-                        let _ = s.save();
-                    }),
-                );
-            }
-            typesearch::start(app.handle().clone());
-            let type_search = CheckMenuItem::with_id(app, "typesearch", t("Type to search in Explorer/Desktop", "Digita per cercare in Esplora risorse/Desktop"), true, loaded.type_search, None::<&str>)?;
-            let autostart = CheckMenuItem::with_id(app, "autostart", t("Start with Windows", "Avvia con Windows"), true, reg(&["query", RUN_KEY, "/v", "lisdir"]), None::<&str>)?;
-            let _ = CHECKS.set((type_search.clone(), autostart.clone()));
-            let update_item = MenuItem::with_id(app, "update", t("Check for updates…", "Controlla aggiornamenti…"), true, None::<&str>)?;
-            let (handle, item) = (app.handle().clone(), update_item.clone());
-            std::thread::spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_secs(20)); // let startup settle first
-                if handle.state::<App>().settings.read().unwrap().check_updates {
-                    check_update(&handle, &item, false);
-                }
-                std::thread::sleep(std::time::Duration::from_secs(24 * 3600));
-            });
-            let menu = Menu::with_items(
-                app,
-                &[
-                    &MenuItem::with_id(app, "version", format!("lisdir {VERSION}"), false, None::<&str>)?,
-                    &MenuItem::with_id(app, "open", t("Open (Alt+Space)", "Apri (Alt+Spazio)"), true, None::<&str>)?,
-                    &type_search,
-                    &autostart,
-                    &MenuItem::with_id(app, "settings", t("Settings…", "Impostazioni…"), true, None::<&str>)?,
-                    &MenuItem::with_id(app, "roots", t("Network folders…", "Cartelle di rete…"), true, None::<&str>)?,
-                    &update_item,
-                    &MenuItem::with_id(app, "install", t("Install index service (admin)…", "Installa servizio di indicizzazione (admin)…"), true, None::<&str>)?,
-                    &MenuItem::with_id(app, "quit", t("Quit", "Esci"), true, None::<&str>)?,
-                ],
-            )?;
-            TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip(format!("lisdir {VERSION}"))
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(move |app, e| match e.id.as_ref() {
-                    "open" => toggle(app),
-                    "typesearch" => {
-                        let on = type_search.is_checked().unwrap_or(true);
-                        typesearch::ENABLED.store(on, Ordering::SeqCst);
-                        let state = app.state::<App>();
-                        let mut s = state.settings.write().unwrap();
-                        s.type_search = on;
-                        let _ = s.save();
-                    }
-                    "autostart" => set_autostart(autostart.is_checked().unwrap_or(false)),
-                    "settings" => open_settings(app),
-                    "roots" => edit_roots(),
-                    "update" => {
-                        let (app, item) = (app.clone(), update_item.clone());
-                        std::thread::spawn(move || {
-                            if app.state::<App>().update.lock().unwrap().is_some() { install_update(&app, &item) } else { check_update(&app, &item, true) }
-                        });
-                    }
-                    "install" => service::request_install(),
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, e| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
-                        toggle(tray.app_handle())
-                    }
-                })
-                .build(app)?;
-            if std::env::args().any(|a| a == "--settings") {
-                open_settings(app.handle()); // `lisdir.exe --settings`
-            }
-            if loaded.hide_tray {
-                if let Some(tray) = app.tray_by_id("main") {
-                    let _ = tray.set_visible(false);
-                }
-            }
-            Ok(())
-        })
-        .on_window_event(|w, e| {
-            if w.label() != "main" {
-                return; // only the search bar hides itself when it loses focus
-            }
-            let app = w.state::<App>();
-            match e {
-                WindowEvent::Focused(true) => app.focused.store(true, Ordering::SeqCst),
-                WindowEvent::Focused(false) if app.focused.swap(false, Ordering::SeqCst) => {
-                    let _ = w.hide();
-                }
-                _ => {}
-            }
-        })
-        .invoke_handler(tauri::generate_handler![search, status, open, act, pin, preview, pane, hide, take_pending, version, lang, icon, remote_search, peer_code, pair_open, pair_state, peer_status, pair_answer, pair_close, pair_with, forget, get_settings, save_settings, settings_window, close_window, pick_folder, get_autostart, set_autostart_cmd, list_drives, restart_app])
-        .run(tauri::generate_context!())
-        .expect("tauri");
+        }
+    }
 }

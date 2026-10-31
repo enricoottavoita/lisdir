@@ -4,9 +4,8 @@
 use std::{
     mem::{size_of, zeroed},
     ptr::null_mut,
-    sync::{atomic::{AtomicBool, Ordering::SeqCst}, Mutex, OnceLock},
+    sync::{atomic::{AtomicBool, Ordering::SeqCst}, Mutex},
 };
-use tauri::AppHandle;
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     UI::{
@@ -20,8 +19,6 @@ use windows_sys::Win32::{
 
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
 static PENDING: Mutex<String> = Mutex::new(String::new());
-static SHOWING: AtomicBool = AtomicBool::new(false);
-static APP: OnceLock<AppHandle> = OnceLock::new();
 
 /// Keys swallowed since the bar was asked to open; the UI claims them once it has focus.
 pub fn take() -> String {
@@ -79,23 +76,14 @@ unsafe extern "system" fn hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code >= 0 && w as u32 == WM_KEYDOWN && ENABLED.load(SeqCst) {
         if let Some(c) = typed_char(&*(l as *const KBDLLHOOKSTRUCT)) {
             PENDING.lock().unwrap().push(c);
-            // Window calls wait on the main thread; never block the hook (Windows drops slow hooks), so show from a thread.
-            if !SHOWING.swap(true, SeqCst) {
-                if let Some(app) = APP.get().cloned() {
-                    std::thread::spawn(move || {
-                        crate::show(&app);
-                        SHOWING.store(false, SeqCst);
-                    });
-                }
-            }
+            crate::bar::request_show(); // only posts a message: Windows drops slow hooks
             return 1; // swallow: Explorer must not also start its own type-ahead
         }
     }
     CallNextHookEx(null_mut(), code, w, l)
 }
 
-pub fn start(app: AppHandle) {
-    let _ = APP.set(app);
+pub fn start() {
     std::thread::spawn(|| unsafe {
         if SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook), null_mut(), 0).is_null() {
             return;

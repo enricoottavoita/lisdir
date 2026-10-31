@@ -5,7 +5,7 @@
 A fast, open-source search bar and app launcher for Windows. Press **Alt+Space** (or just start typing in an
 Explorer window or on the desktop) and find files, folders and apps on your machine as you type.
 
-Written in Rust with a [Tauri](https://tauri.app) front end. MIT licensed.
+Written in Rust, with a native Win32 and Direct2D interface. MIT licensed.
 
 ## Features
 
@@ -85,7 +85,7 @@ biggest.
  normal user                         elevated (scheduled task, runs at logon)
 ┌──────────────────────┐  named pipe ┌────────────────────────────┐
 │ lisdir.exe           │◀───────────▶│ lisdir.exe --helper        │
-│  Tauri window, tray, │  (ACL: you  │  MFT scan, USN journal,    │
+│  native window, tray,│  (ACL: you  │  MFT scan, USN journal,    │
 │  hotkey, key hook,   │   + SYSTEM) │  on-disk index cache       │
 │  SMB walk, app list  │             └────────────────────────────┘
 └──────────────────────┘
@@ -105,21 +105,22 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/peer.rs` | Other PCs: the pairing list, the encrypted link (iroh/QUIC), what this PC answers and the questions it asks |
 | `src-tauri/src/usage.rs` | What you open: recent items and the small ranking boost; the same list format holds the pins |
 | `src-tauri/src/apps.rs` | Start menu and Store app list for the launcher |
-| `src-tauri/src/icons.rs` | Shell file-type icons and preview thumbnails rendered to BMP |
+| `src-tauri/src/icons.rs` | Shell file-type icons and preview thumbnails as pixels |
 | `src-tauri/src/actions.rs` | The action menu: files on the clipboard as Explorer puts them, open with, terminal, properties; text for the preview |
 | `src-tauri/src/settings.rs` | The settings file: shortcut, language, theme, tray icon, update check, indexed disks and folders, rules |
 | `src-tauri/src/rules.rs` | The do-not-index and hide-from-results rules |
 | `src-tauri/src/update.rs` | Update check against the GitHub releases; downloads and verifies the installer, or swaps in the portable exe |
 | `src-tauri/src/typesearch.rs` | Low-level keyboard hook for system-wide "type to search" |
-| `src-tauri/src/main.rs` | UI process: window, tray, hotkey, commands |
-| `ui/index.html` | The search bar (plain HTML/JS, no build step) |
-| `ui/settings.html` | The settings window |
-| `ui/theme.css` | The colour themes, shared by the bar and the settings window |
+| `src-tauri/src/main.rs` | UI process: start-up, search, opening files, saving settings, updates |
+| `src-tauri/src/bar.rs` | The search bar |
+| `src-tauri/src/prefs.rs` | The settings window |
+| `src-tauri/src/tray.rs` | The tray icon and its menu, the global shortcut |
+| `src-tauri/src/gfx.rs` | The colour themes and the Direct2D drawing shared by the windows |
 
 ## Build
 
 Requirements: Windows 10/11 (64-bit), the [Rust toolchain](https://rustup.rs) (MSVC), Visual Studio Build Tools
-(C++ workload), and the WebView2 runtime (already present on Windows 11).
+(C++ workload).
 
 ```
 cd src-tauri
@@ -127,7 +128,7 @@ cargo test
 cargo build --release
 ```
 
-The binary is `src-tauri/target/release/lisdir.exe`. There is no front-end build step.
+The binary is `src-tauri/target/release/lisdir.exe`.
 
 ## Install and run
 

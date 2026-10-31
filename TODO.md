@@ -23,6 +23,7 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Other PCs: search the files of your other computers over an encrypted link, off by default (0.17)
 - [x] Pairing with a 4-character verification code; `peer.key` sealed with DPAPI (0.17.2)
 - [x] Search: letter masks apart from the entries, one block for the lowercased names, other PCs asked in parallel (0.17.2)
+- [x] Native Win32 and Direct2D windows for the bar and the settings; Tauri and WebView2 removed (0.17.5)
 - [x] The recent list is titled and drawn in grey, so it reads as history, not as results (0.16.4)
 - [x] `size:` filter and exact modified times from the NTFS file records (0.14)
 - [x] Search on several cores; the cache is saved without pausing searches (0.14.1)
@@ -53,11 +54,9 @@ unelevated, and every feature ships with a test or a measured check.
       unsupported file system, helper not running, network folder not yet walked, and how to fix it
 - [ ] About page: item counts, per-volume status, last walk times, and a small built-in speed test
 - [ ] Tell the user when settings cannot be saved (the settings window shows the error; other places do not yet)
-- [ ] State the memory of the running helper and UI in the README once measured after the next release. On 0.17.2 with
-      C: and D: (1.7 million entries): helper 454 MB private after a day, UI 339 MB (it also holds the walked
-      disks), the web view about 144 MB private in 6 processes once the bar was opened. The index alone is now 154 MB
-      freshly loaded (326 MB before). Next savings: entries of 24 bytes (time as 4 bytes, the two flags in `hot`),
-      freeing the web view after a long idle time (costs about half a second to reopen the bar)
+- [ ] State the memory of the running helper and UI in the README once measured on an installed copy. On 0.17.5 the UI
+      took 124 MB private with three network disks walked; the helper is not measured yet. The index alone is 154 MB
+      freshly loaded for 1.7 million entries. Next saving: entries of 24 bytes (time as 4 bytes, the two flags in `hot`)
 
 ## Other PCs — next
 - [ ] Limit how often a paired PC may ask, and the connections waiting at once

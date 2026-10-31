@@ -10,6 +10,23 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-10-31
+
+### Changed
+- The search bar and the settings window are now native Windows windows, drawn with Direct2D. WebView2 and Tauri are
+  gone: lisdir no longer starts a browser engine, so the five WebView2 processes and their memory go with it (about
+  118 MB measured). The program is 8 MB instead of 15. On the development PC, with three network disks indexed and the
+  settings window open, the UI process takes about 124 MB.
+- The preview's on/off state is kept in the settings file.
+- In the settings window the wheel keeps moving the page when the pointer passes over a text box or a list. A text box
+  takes the wheel only after you click in it, and hands it back to the page at its top and bottom.
+
+### Known limits
+- Scroll bars stay light in the dark themes, because Windows offers no supported way to darken them.
+- The text boxes of the settings window no longer show example text inside; the hints above them give the examples.
+- The scroll indicator of the result list can't be dragged; the wheel and the keyboard scroll the list.
+- The rows of the paired PCs have no tooltip.
+
 ## [0.17.3] - 2026-10-30
 
 ### Changed
@@ -274,7 +291,10 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.5...HEAD
+[0.17.5]: https://github.com/enricoottavoita/lisdir/compare/v0.17.3...v0.17.5
+[0.17.3]: https://github.com/enricoottavoita/lisdir/compare/v0.17.2...v0.17.3
+[0.17.2]: https://github.com/enricoottavoita/lisdir/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/enricoottavoita/lisdir/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/enricoottavoita/lisdir/compare/v0.16.4...v0.17.0
 [0.16.4]: https://github.com/enricoottavoita/lisdir/compare/v0.16.3...v0.16.4

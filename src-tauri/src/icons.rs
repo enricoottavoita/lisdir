@@ -1,4 +1,4 @@
-//! File-type icons for the result list: the shell's own icon (what Explorer shows), rendered to BMP.
+//! File-type icons for the result list: the shell's own icon (what Explorer shows), as BGRA pixels.
 //! Icons are looked up by *type* (extension) without touching the file, so it is instant even on a slow
 //! network share; only programs and shortcuts, whose icon belongs to the individual file, are read by path.
 use std::{
@@ -15,6 +15,9 @@ use windows_sys::Win32::{
         WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO},
     },
 };
+
+/// An image from the shell: width, height and top-down BGRA rows.
+pub type Pixels = (usize, usize, Vec<u8>);
 
 /// Extensions whose icon is stored in the file itself.
 const PER_FILE: [&str; 5] = ["exe", "lnk", "ico", "url", "scr"];
@@ -33,14 +36,14 @@ pub fn key(name: &str, path: &str, is_dir: bool) -> String {
     }
 }
 
-/// The shell wants COM on the calling thread; worker threads of the async runtime have none by default.
+/// The shell wants COM on the calling thread; worker threads have none by default.
 fn com() {
     thread_local! { static COM: () = unsafe { CoInitializeEx(null(), 2 /* COINIT_APARTMENTTHREADED */); }; }
     COM.with(|_| {});
 }
 
-/// BMP bytes of the 32x32 shell icon for a key from `key()`.
-pub fn icon_image(key: &str, path: &str) -> Option<Vec<u8>> {
+/// The 32x32 shell icon for a key from `key()`.
+pub fn icon_image(key: &str, path: &str) -> Option<Pixels> {
     com();
     // One at a time: a result list asks for several icons at once, and the shell's icon lookup is not
     // reliable when hammered from many threads. Each type is rendered once and cached, so this is cheap.
@@ -65,13 +68,13 @@ pub fn icon_image(key: &str, path: &str) -> Option<Vec<u8>> {
         }
         let px = to_bgra(fi.hIcon);
         DestroyIcon(fi.hIcon);
-        px.map(|(w, h, bgra)| to_bmp(w, h, &bgra))
+        px
     }
 }
 
 /// The shell's picture of a file, at most `px` wide or high: what Explorer shows in Large icons view (a thumbnail
 /// for photos, videos, PDFs, and the big icon for the rest).
-pub fn thumbnail_image(path: &str, px: i32) -> Option<Vec<u8>> {
+pub fn thumbnail_image(path: &str, px: i32) -> Option<Pixels> {
     // IShellItemImageFactory, called through its vtable (windows-sys has no COM wrappers)
     #[repr(C)]
     struct Vtbl {
@@ -101,12 +104,12 @@ pub fn thumbnail_image(path: &str, px: i32) -> Option<Vec<u8>> {
         if opaque {
             p.chunks_exact_mut(4).for_each(|c| c[3] = 255);
         }
-        Some(to_bmp(w, h, &p))
+        Some((w, h, p))
     }
 }
 
 /// Icon of a Start menu / Store app, addressed through its `shell:AppsFolder` item.
-unsafe fn app_icon(id: &str) -> Option<Vec<u8>> {
+unsafe fn app_icon(id: &str) -> Option<Pixels> {
     let name = crate::engine::wide(&format!(r"shell:AppsFolder\{id}"));
     let mut pidl = null_mut();
     if SHParseDisplayName(name.as_ptr(), null_mut(), &mut pidl, 0, null_mut()) != 0 {
@@ -120,11 +123,11 @@ unsafe fn app_icon(id: &str) -> Option<Vec<u8>> {
     }
     let px = to_bgra(fi.hIcon);
     DestroyIcon(fi.hIcon);
-    px.map(|(w, h, bgra)| to_bmp(w, h, &bgra))
+    px
 }
 
 /// Read an icon's pixels as BGRA. Old-style icons have no alpha channel; their transparency is in the mask.
-unsafe fn to_bgra(icon: HICON) -> Option<(usize, usize, Vec<u8>)> {
+unsafe fn to_bgra(icon: HICON) -> Option<Pixels> {
     let mut ii: ICONINFO = zeroed();
     if GetIconInfo(icon, &mut ii) == 0 {
         return None;
@@ -152,7 +155,7 @@ unsafe fn to_bgra(icon: HICON) -> Option<(usize, usize, Vec<u8>)> {
 }
 
 /// A bitmap's pixels as top-down BGRA rows.
-unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(usize, usize, Vec<u8>)> {
+unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<Pixels> {
     let mut bm: BITMAP = zeroed();
     GetObjectW(bitmap, size_of::<BITMAP>() as i32, (&mut bm as *mut BITMAP).cast());
     let (w, h) = (bm.bmWidth as usize, bm.bmHeight as usize);
@@ -173,32 +176,6 @@ unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(usize, usize, Vec<u8>)> {
     (rows != 0 && w > 0).then_some((w, h, buf))
 }
 
-// ---- BMP writer. The webview decodes BMP itself, so there is no need for a PNG encoder (and its checksums). It
-// ---- has to be the V4 header with channel masks: with the plain 40-byte header the alpha channel is ignored.
-
-/// A top-down 32-bit BMP with alpha from BGRA pixels.
-fn to_bmp(w: usize, h: usize, bgra: &[u8]) -> Vec<u8> {
-    const HEADERS: usize = 14 + 108; // file header + BITMAPV4HEADER
-    let mut out = Vec::with_capacity(HEADERS + bgra.len());
-    out.extend(b"BM");
-    out.extend(((HEADERS + bgra.len()) as u32).to_le_bytes());
-    out.extend([0u8; 4]);
-    out.extend((HEADERS as u32).to_le_bytes());
-    out.extend(108u32.to_le_bytes()); // header size
-    out.extend((w as i32).to_le_bytes());
-    out.extend((-(h as i32)).to_le_bytes()); // negative: rows run top to bottom
-    out.extend([1, 0, 32, 0]); // planes, bits per pixel
-    out.extend(3u32.to_le_bytes()); // BI_BITFIELDS: the masks below say where each channel is
-    out.extend((bgra.len() as u32).to_le_bytes());
-    out.extend([0u8; 16]); // resolution, colour counts
-    for mask in [0x00FF_0000u32, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000] {
-        out.extend(mask.to_le_bytes()); // red, green, blue, alpha
-    }
-    out.extend([0u8; 52]); // colour space, endpoints, gamma
-    out.extend(bgra);
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,23 +191,11 @@ mod tests {
         bmp.extend([0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0, 0]);
         std::fs::write(&photo, bmp).unwrap();
         for p in [photo.to_str().unwrap(), r"C:\Windows"] {
-            let img = thumbnail_image(p, 256).unwrap_or_else(|| panic!("no thumbnail for {p}"));
-            assert_eq!(&img[..2], b"BM");
+            let (w, h, px) = thumbnail_image(p, 256).unwrap_or_else(|| panic!("no thumbnail for {p}"));
+            assert_eq!(px.len(), w * h * 4);
         }
         assert!(thumbnail_image(r"C:\no\such\file.jpg", 256).is_none());
         let _ = std::fs::remove_file(photo);
-    }
-
-    #[test]
-    fn bmp_has_a_v4_header_with_alpha_and_top_down_rows() {
-        let b = to_bmp(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]);
-        let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
-        assert_eq!(&b[..2], b"BM");
-        assert_eq!(u32_at(2) as usize, b.len()); // file size
-        assert_eq!(u32_at(10), 122); // pixels start after the file header and the 108-byte header
-        assert_eq!((u32_at(14), u32_at(18) as i32, u32_at(22) as i32), (108, 2, -1)); // size, width, negative height
-        assert_eq!((u32_at(30), u32_at(54), u32_at(66)), (3, 0x00FF_0000, 0xFF00_0000)); // bitfields, red and alpha masks
-        assert_eq!(&b[122..], &[1, 2, 3, 4, 5, 6, 7, 8]); // pixels untouched
     }
 
     #[test]
@@ -240,19 +205,5 @@ mod tests {
         assert_eq!(key("notes", r"C:\a\notes", false), "file");
         assert_eq!(key(".gitignore", r"C:\a\.gitignore", false), "file");
         assert_eq!(key("Setup.EXE", r"C:\a\Setup.EXE", false), r"C:\a\Setup.EXE");
-    }
-
-    /// Writes real shell icons to %TEMP%\lisdir_icons for eyeballing: cargo test --release dump_icons -- --ignored
-    #[test]
-    #[ignore]
-    fn dump_icons() {
-        let dir = std::env::temp_dir().join("lisdir_icons");
-        std::fs::create_dir_all(&dir).unwrap();
-        for (k, p) in [("dir", ""), (".txt", ""), (".mp4", ""), (".jpg", ""), (".pdf", ""), (".zip", ""), (".docx", ""), (".mp3", ""), ("file", ""), ("exe", r"C:\Windows\notepad.exe")] {
-            let name = k.trim_start_matches('.').replace(['\\', ':'], "_");
-            let bytes = icon_image(if k == "exe" { p } else { k }, p).unwrap_or_default();
-            println!("{k}: {} bytes", bytes.len());
-            std::fs::write(dir.join(format!("{name}.bmp")), bytes).unwrap();
-        }
     }
 }

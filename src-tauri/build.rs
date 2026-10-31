@@ -1,4 +1,4 @@
 fn main() {
-    // ponytail: the app must be started elevated (MFT needs a raw volume handle); a requireAdministrator manifest breaks `cargo test`. Move scanning to an elevated service later.
-    tauri_build::build()
+    // the icon, and the manifest with common controls 6 (text box hints, themes) and per-monitor sharpness
+    embed_resource::compile("lisdir.rc", embed_resource::NONE).manifest_optional().unwrap();
 }

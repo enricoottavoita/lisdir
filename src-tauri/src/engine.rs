@@ -1028,11 +1028,9 @@ fn is_remote(letter: char) -> bool {
 }
 
 /// A disk lisdir knows about, and how it is indexed.
-#[derive(serde::Serialize)]
 pub struct Drive {
     pub letter: String,
     pub label: String,
-    pub fs: String,
     /// "ntfs" (MFT index by the helper), "walk" (another local file system, walked) or "network" (walked)
     pub kind: &'static str,
     /// false for a removable disk that was seen before and is unplugged now (its results are kept)
@@ -1083,12 +1081,12 @@ pub fn drives(disks_off: &[String]) -> Vec<Drive> {
             2 | 3 if !fs.is_empty() && fs != "ReFS" => "walk",
             _ => continue,
         };
-        out.push(Drive { letter: l.to_string(), label, fs, kind, present: true, indexed: !off(&l.to_string()) });
+        out.push(Drive { letter: l.to_string(), label, kind, present: true, indexed: !off(&l.to_string()) });
     }
     for r in remembered() {
         if !out.iter().any(|d| d.letter == r) {
             let indexed = !off(&r);
-            out.push(Drive { letter: r, label: String::new(), fs: String::new(), kind: "walk", present: false, indexed });
+            out.push(Drive { letter: r, label: String::new(), kind: "walk", present: false, indexed });
         }
     }
     out
@@ -1805,7 +1803,7 @@ mod tests {
     fn drives_lists_the_system_disk() {
         let all = drives(&[]);
         let c = all.iter().find(|d| d.letter == "C").expect("C: is listed");
-        assert!(c.present && c.indexed && !c.fs.is_empty());
+        assert!(c.present && c.indexed);
         let off = drives(&["C".into()]);
         assert!(!off.iter().find(|d| d.letter == "C").unwrap().indexed);
         assert!(walk_roots(&[r"X:\Extra\".into()], &[]).iter().any(|r| r == r"X:\Extra"));
