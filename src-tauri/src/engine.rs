@@ -2039,11 +2039,11 @@ mod tests {
 
     /// `changes` as `refresh` handles them: wait for the reports to arrive, then look at each path.
     fn settle(vol: &RwLock<Volume>, changes: &Receiver<Option<String>>, act: &rules::Active) {
-        let mut paths = HashSet::new();
-        while let Ok(c) = changes.recv_timeout(Duration::from_millis(300)) {
+        let first = changes.recv_timeout(Duration::from_secs(10)).expect("the watch reported nothing");
+        let mut paths = HashSet::from([first.expect("no overflow for a few files")]);
+        while let Ok(c) = changes.recv_timeout(Duration::from_millis(500)) {
             paths.insert(c.expect("no overflow for a few files"));
         }
-        assert!(!paths.is_empty(), "the watch reported nothing");
         paths.iter().for_each(|p| refresh_path_with(vol, p, act));
     }
 
@@ -2058,6 +2058,11 @@ mod tests {
         let v = walk_with(r, None, Index::new(), &act);
         let vol = RwLock::new(Volume { root: r.into(), walk: true, idx: v.idx, journal_id: 0, next_usn: 0, dirty: false });
         let changes = watch(r).unwrap();
+        // the watch counts from its first call, in its own thread: touch a file until it is seen
+        let ready = root.join("ready");
+        while { std::fs::write(&ready, b"x").unwrap(); changes.recv_timeout(Duration::from_millis(50)).is_err() } {}
+        std::fs::remove_file(&ready).unwrap();
+        settle(&vol, &changes, &act);
         let at = |rel| { let v = vol.read().unwrap(); find(&v.idx, rel).map(|f| v.idx.at(&f)) };
         let sub_size = || at("sub").unwrap().size;
         assert_eq!(sub_size(), 5);
