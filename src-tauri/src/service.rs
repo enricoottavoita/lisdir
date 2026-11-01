@@ -297,6 +297,11 @@ pub fn start_helper() -> bool {
     quiet("schtasks", &["/Run", "/TN", TASK])
 }
 
+/// Whether the helper is up. A busy pipe counts: only a missing one means it is not running.
+pub fn running() -> bool {
+    !matches!(OpenOptions::new().write(true).open(PIPE), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+}
+
 /// `stop_helper`, then wait (up to 5 s) until the pipe is gone, so a new helper can take its place.
 pub fn stop_helper_and_wait() {
     stop_helper();

@@ -10,6 +10,15 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.17.6] - 2026-11-01
+
+### Changed
+- A folder opened from the results replaces the visible tab of the Explorer window in front. A new window opens only
+  when no Explorer window is open.
+
+### Fixed
+- The tray menu offers "Install index service" only while the service is not running.
+
 ## [0.17.5] - 2026-10-31
 
 ### Changed
@@ -291,7 +300,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.5...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.6...HEAD
+[0.17.6]: https://github.com/enricoottavoita/lisdir/compare/v0.17.5...v0.17.6
 [0.17.5]: https://github.com/enricoottavoita/lisdir/compare/v0.17.3...v0.17.5
 [0.17.3]: https://github.com/enricoottavoita/lisdir/compare/v0.17.2...v0.17.3
 [0.17.2]: https://github.com/enricoottavoita/lisdir/compare/v0.17.1...v0.17.2

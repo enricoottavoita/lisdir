@@ -246,7 +246,7 @@ fn open(h: &Hit, folder: bool) {
     app().usage.lock().unwrap().record(path, &h.name, h.is_dir, h.app, now());
     if folder {
         let _ = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
-    } else {
+    } else if !(h.is_dir && actions::browse_in_explorer(path)) {
         // ShellExecute, like double-clicking in Explorer: no console window flashing up (unlike `cmd /c start`).
         let (verb, file) = (engine::wide("open"), engine::wide(path));
         unsafe { windows_sys::Win32::UI::Shell::ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), 1 /* SW_SHOWNORMAL */) };

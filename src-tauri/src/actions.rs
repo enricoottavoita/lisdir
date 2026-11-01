@@ -3,11 +3,12 @@
 use crate::engine::wide;
 use std::ffi::c_void;
 use std::path::Path;
-use std::ptr::null_mut;
-use windows_sys::Win32::Foundation::GlobalFree;
+use std::ptr::{null, null_mut};
+use windows_sys::Win32::Foundation::{GlobalFree, HWND};
 use windows_sys::Win32::System::DataExchange::*;
 use windows_sys::Win32::System::Memory::*;
 use windows_sys::Win32::UI::Shell::*;
+use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowExW, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE};
 
 const CF_UNICODETEXT: u32 = 13;
 const CF_HDROP: u32 = 15;
@@ -84,6 +85,51 @@ pub fn verb(verb: &str, path: &str) {
     unsafe { ShellExecuteExW(&mut i) };
 }
 
+/// The frontmost Explorer window, null if there is none. Explorer also keeps hidden ones around.
+unsafe fn front_explorer() -> HWND {
+    let class = wide("CabinetWClass");
+    let mut frame = FindWindowExW(null_mut(), null_mut(), class.as_ptr(), null());
+    while !frame.is_null() && IsWindowVisible(frame) == 0 {
+        frame = FindWindowExW(null_mut(), frame, class.as_ptr(), null());
+    }
+    frame
+}
+
+/// Open a folder in the visible tab of the frontmost Explorer window. False if that can't be done, and nothing changed.
+pub fn browse_in_explorer(path: &str) -> bool {
+    use windows::{core::{Interface, PCWSTR}, Win32::{System::Com::{CoCreateInstance, IServiceProvider, CLSCTX_ALL}, UI::Shell::{ILFree, IShellBrowser, IShellWindows, SHParseDisplayName, ShellWindows, SBSP_ABSOLUTE, SBSP_SAMEBROWSER, SID_STopLevelBrowser}}};
+    unsafe {
+        let frame = front_explorer();
+        // the first tab window is the visible tab
+        let tab = FindWindowExW(frame, null_mut(), wide("ShellTabWindowClass").as_ptr(), null());
+        let Ok(shell) = CoCreateInstance::<_, IShellWindows>(&ShellWindows, None, CLSCTX_ALL) else { return false };
+        if frame.is_null() || tab.is_null() {
+            return false;
+        }
+        for i in 0..shell.Count().unwrap_or(0) {
+            let browser = shell.Item(&i.into()).and_then(|w| w.cast::<IServiceProvider>()).and_then(|s| s.QueryService::<IShellBrowser>(&SID_STopLevelBrowser));
+            if !browser.as_ref().is_ok_and(|b| b.GetWindow().is_ok_and(|w| w.0 == tab)) {
+                continue;
+            }
+            // an ID list, not a URL: a folder may have # or % in its name
+            let (name, mut list) = (wide(path), null_mut());
+            if SHParseDisplayName(PCWSTR(name.as_ptr()), None, &mut list, 0, None).is_err() {
+                return false;
+            }
+            let ok = browser.is_ok_and(|b| b.BrowseObject(list, SBSP_SAMEBROWSER | SBSP_ABSOLUTE).is_ok());
+            ILFree(Some(list));
+            if ok {
+                if IsIconic(frame) != 0 {
+                    ShowWindow(frame, SW_RESTORE);
+                }
+                SetForegroundWindow(frame);
+            }
+            return ok;
+        }
+        false
+    }
+}
+
 /// Windows Terminal in the folder of the item (the item itself if it is a folder), else a plain console.
 pub fn terminal(path: &str, is_dir: bool) {
     let p = Path::new(path);
@@ -135,6 +181,42 @@ mod tests {
         assert_eq!(text_start(b.to_str().unwrap()), None);
         assert_eq!(text_start(dir.join("missing").to_str().unwrap()), None);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Opens and closes an Explorer window, so run by hand: cargo test front_explorer -- --ignored
+    #[test]
+    #[ignore]
+    fn front_explorer_window_changes_folder() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowTextW, PostMessageW, WM_CLOSE};
+        let title = |h: HWND| unsafe {
+            let mut buf = [0u16; 260];
+            let len = GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32) as usize;
+            String::from_utf16_lossy(&buf[..len])
+        };
+        let wait = |text: &str| (0..50).find_map(|_| {
+            let h = unsafe { front_explorer() };
+            if !h.is_null() && title(h).contains(text) {
+                return Some(h);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            None
+        });
+        let dir = std::env::temp_dir().join("lisdir_browse_test");
+        let (a, b) = (dir.join("lisdir-first"), dir.join("lisdir#second"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        unsafe { let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED); }
+        std::process::Command::new("explorer").arg(&a).spawn().unwrap();
+        // only our own window: anything else in front stops the test before it changes folder
+        let frame = wait("lisdir-first").expect("the test window did not come to the front");
+        let class = wide("ShellTabWindowClass");
+        let first = unsafe { FindWindowExW(frame, null_mut(), class.as_ptr(), null()) };
+        assert!(unsafe { FindWindowExW(frame, first, class.as_ptr(), null()) }.is_null(), "opened as a tab in an existing window");
+        let (ok, moved) = (browse_in_explorer(b.to_str().unwrap()), wait("lisdir#second").is_some());
+        unsafe { PostMessageW(frame, WM_CLOSE, 0, 0) };
+        assert!(ok && moved);
+        std::thread::sleep(std::time::Duration::from_millis(500)); // the window lets go of the folders
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Replaces your clipboard, so run by hand: cargo test clipboard -- --ignored

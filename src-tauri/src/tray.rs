@@ -108,7 +108,9 @@ unsafe fn menu(h: HWND) {
     let state = UPDATE.lock().unwrap().clone();
     let (text, enabled) = state.unwrap_or((t("Check for updates…", "Controlla aggiornamenti…").to_string(), true));
     add(update, &text, if enabled { 0 } else { MF_GRAYED });
-    add(install, t("Install index service (admin)…", "Installa servizio di indicizzazione (admin)…"), 0);
+    if !service::running() {
+        add(install, t("Install index service (admin)…", "Installa servizio di indicizzazione (admin)…"), 0);
+    }
     add(exit, t("Quit", "Esci"), 0);
     let mut at: POINT = zeroed();
     GetCursorPos(&mut at);
