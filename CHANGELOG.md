@@ -10,7 +10,9 @@ when releasing.
 
 ## [Unreleased]
 
-## [0.17.7] - 2026-11-01
+## [0.17.8] - 2026-11-01
+
+0.17.7 was never published: its build stopped on a test that depended on timing.
 
 ### Changed
 - Network folders: changes the server reports reach the results within seconds, instead of waiting for the next walk.
@@ -314,8 +316,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.7...HEAD
-[0.17.7]: https://github.com/enricoottavoita/lisdir/compare/v0.17.6...v0.17.7
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.8...HEAD
+[0.17.8]: https://github.com/enricoottavoita/lisdir/compare/v0.17.6...v0.17.8
 [0.17.6]: https://github.com/enricoottavoita/lisdir/compare/v0.17.5...v0.17.6
 [0.17.5]: https://github.com/enricoottavoita/lisdir/compare/v0.17.3...v0.17.5
 [0.17.3]: https://github.com/enricoottavoita/lisdir/compare/v0.17.2...v0.17.3
