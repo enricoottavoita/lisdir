@@ -21,7 +21,7 @@ use query::{Clock, Query};
 use service::{Hit, Shared, Volumes};
 use std::{
     os::windows::process::CommandExt,
-    sync::{atomic::{AtomicUsize, Ordering}, Arc, OnceLock, RwLock},
+    sync::{atomic::{AtomicUsize, Ordering}, mpsc::RecvTimeoutError, Arc, OnceLock, RwLock},
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, TranslateMessage};
 
@@ -56,17 +56,25 @@ fn app() -> &'static App {
     APP.get().expect("set at the start of main")
 }
 
-/// Keep a network volume current by periodically re-walking it. It is searchable from the cache
-/// (or empty) right away; a first walk of a big share can take minutes.
+/// Keep a network volume current: apply the changes the share reports, and re-walk it now and then, since a server does not
+/// always tell. It is searchable from the cache (or empty) right away; a first walk of a big share can take minutes.
+/// The cache is written by the walks only: a start walks again unless the last one was minutes ago.
 fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
     let root = vol.read().unwrap().root.clone();
     let mut wait = engine::WALK_INTERVAL;
+    // started before a walk: what changes during it is applied after it
+    let mut changes = engine::watch(&root);
+    let mut reports = false; // it may accept a watch and never report anything
     loop {
         if stale {
+            changes = changes.or_else(|| engine::watch(&root));
             busy.fetch_add(1, Ordering::SeqCst);
             // with nothing indexed yet, show entries as they are found instead of after the whole walk
-            let streamed = vol.read().unwrap().idx.is_empty();
-            let w = engine::walk(&root, streamed.then_some(&*vol));
+            let (streamed, room) = {
+                let v = vol.read().unwrap();
+                (v.idx.is_empty(), v.idx.sized_like())
+            };
+            let w = engine::walk(&root, streamed.then_some(&*vol), room);
             if w.reliable() {
                 {
                     let mut v = vol.write().unwrap();
@@ -76,14 +84,41 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
                     v.dirty = true;
                 }
                 let _ = engine::save_shared(&vol);
-                wait = engine::WALK_INTERVAL;
+                wait = if reports { engine::WATCHED_WALK_INTERVAL } else { engine::WALK_INTERVAL };
             } else {
                 // share offline or drive unplugged: keep the old results (and cache) and retry soon
                 wait = engine::RETRY_INTERVAL;
             }
             busy.fetch_sub(1, Ordering::SeqCst);
         }
-        std::thread::sleep(wait);
+        let due = std::time::Instant::now() + wait;
+        loop {
+            let left = due.saturating_duration_since(std::time::Instant::now());
+            let Some(rx) = &changes else {
+                std::thread::sleep(left);
+                break;
+            };
+            match rx.recv_timeout(left) {
+                Ok(Some(first)) => {
+                    reports = true;
+                    std::thread::sleep(std::time::Duration::from_secs(1)); // a copy reports a file many times
+                    let mut paths = std::collections::HashSet::from([first]);
+                    let mut too_many = false;
+                    for c in rx.try_iter() {
+                        match c {
+                            Some(p) => { paths.insert(p); }
+                            None => too_many = true,
+                        }
+                    }
+                    if too_many || paths.len() > engine::MAX_CHANGES {
+                        break;
+                    }
+                    paths.iter().for_each(|p| engine::refresh_path(&vol, p));
+                }
+                Ok(None) | Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => (changes, reports) = (None, false),
+            }
+        }
         stale = true;
     }
 }
@@ -120,11 +155,13 @@ fn start(app: &App) {
         (s.folders.clone(), s.disks_off.clone())
     };
     for root in engine::walk_roots(&folders, &disks_off) {
-        let (v, fresh) = engine::open_walk(&root);
-        let v: Shared = Arc::new(RwLock::new(v));
-        app.network.write().unwrap().push(v.clone());
-        let busy = app.busy.clone();
-        std::thread::spawn(move || refresh(v, !fresh, busy));
+        let (network, busy) = (app.network.clone(), app.busy.clone());
+        std::thread::spawn(move || {
+            let (v, fresh) = engine::open_walk(&root);
+            let v: Shared = Arc::new(RwLock::new(v));
+            network.write().unwrap().push(v.clone());
+            refresh(v, !fresh, busy)
+        });
     }
 }
 

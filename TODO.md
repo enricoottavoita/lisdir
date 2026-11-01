@@ -54,16 +54,14 @@ unelevated, and every feature ships with a test or a measured check.
       unsupported file system, helper not running, network folder not yet walked, and how to fix it
 - [ ] About page: item counts, per-volume status, last walk times, and a small built-in speed test
 - [ ] Tell the user when settings cannot be saved (the settings window shows the error; other places do not yet)
-- [ ] State the memory of the running helper and UI in the README once measured on an installed copy. On 0.17.5 the UI
-      took 124 MB private with three network disks walked; the helper is not measured yet. The index alone is 154 MB
-      freshly loaded for 1.7 million entries. Next saving: entries of 24 bytes (time as 4 bytes, the two flags in `hot`)
+- [ ] State the memory of the running helper and UI in the README once measured on an installed copy (0.17.6: helper
+      171 MB private, UI 131 MB with three network disks; the entries are 12 bytes smaller since then)
 
 ## Other PCs — next
 - [ ] Limit how often a paired PC may ask, and the connections waiting at once
 - [ ] Share only some folders, or names without paths
 - [ ] Short pairing code with a password-based key exchange (PAKE) instead of the long code
 - [ ] Show the last results of a PC that is off, marked as not online
-- [ ] Faster start: load the disks in parallel without raising the memory peak, and skip the folder recount when nothing changed (it takes about 0.4 s per 1.6 million entries)
 
 ## Later
 - [ ] Double-tap `Ctrl` as a shortcut (needs the low-level keyboard hook)
@@ -83,7 +81,6 @@ unelevated, and every feature ships with a test or a measured check.
 - [ ] If search ever feels slow again: keep lowercase names in one byte buffer (no pointer per name) and/or a
       3-letter index (today 35–60 ms over 1.6 million entries, so not needed yet)
 - [ ] Integration with third-party file managers
-- [ ] Network folders: change detection instead of periodic re-walk
 - [ ] Packaging: winget and Scoop manifests
 - [ ] Code-signed executables (removes the SmartScreen warning)
 - [ ] Windows on ARM build

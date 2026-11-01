@@ -17,8 +17,9 @@ Scritto in Rust, con interfaccia nativa Win32 e Direct2D. Licenza MIT.
   chiusura del file). L'indice è salvato su disco, quindi a ogni riavvio recupera solo ciò che è cambiato; nel frattempo
   le modifiche vengono aggiunte a un piccolo registro, senza riscrivere tutta la cache.
 - **Cartelle di rete e altri dischi.** Unità mappate, percorsi UNC (condivisioni SMB) e dischi locali non NTFS
-  (chiavette USB, exFAT, FAT) sono indicizzati con una scansione parallela e aggiornati ogni 10 minuti. Una chiavetta
-  mantiene i suoi risultati mentre è scollegata. Alla primissima scansione i risultati compaiono mentre è in corso.
+  (chiavette USB, exFAT, FAT) sono indicizzati con una scansione parallela. Le modifiche segnalate dal server compaiono
+  in pochi secondi; una condivisione viene riscansionata ogni ora se le segnala, altrimenti ogni 10 minuti. Una
+  chiavetta mantiene i suoi risultati mentre è scollegata. Alla primissima scansione i risultati compaiono mentre è in corso.
 - **Digita per cercare.** Con una cartella di Esplora risorse o il Desktop in primo piano, scrivere delle lettere
   apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona o dalle impostazioni).
 - **Ricerca approssimata.** `rdme` trova `README.md`; inizi di parola e lettere consecutive
@@ -168,7 +169,8 @@ cargo build --release
 - I dischi locali si leggono dalla MFT solo se sono NTFS; gli altri file system locali (exFAT, FAT) vengono scansionati
   cartella per cartella, e le modifiche compaiono al prossimo aggiornamento. I volumi ReFS e le unità ottiche non sono
   indicizzati.
-- Le cartelle di rete vengono riscansionate, non osservate: le modifiche compaiono al prossimo aggiornamento.
+- Un server di rete non segnala tutto: una modifica che tace (alcuni NAS, per i file scritti dal NAS stesso) compare
+  alla scansione successiva, fino a un'ora dopo su una condivisione che di solito le segnala.
 - Una cartella di rete alla primissima scansione mostra risultati parziali finché non è finita (minuti per una
   condivisione molto grande); dagli avvii successivi usa la cache.
 - Dimensioni e date dei dischi locali vengono dai record NTFS. Un file i cui dati stanno in un record di estensione

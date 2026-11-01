@@ -17,7 +17,8 @@ Written in Rust, with a native Win32 and Direct2D interface. MIT licensed.
   a file is closed). The index is cached on disk, so a restart only has to catch up on what changed; between
   restarts only the changes are appended to a small log, not the whole cache rewritten.
 - **Network folders and other disks.** Mapped drives, UNC paths (SMB shares) and local disks that are not NTFS (USB
-  sticks, exFAT, FAT) are indexed by a parallel directory walk and refreshed every 10 minutes. A stick keeps its
+  sticks, exFAT, FAT) are indexed by a parallel directory walk. Changes the server reports appear within
+  seconds; a share is walked again every hour if it reports them, otherwise every 10 minutes. A stick keeps its
   results while unplugged. On the very first walk, results appear while it is still running.
 - **Type to search.** With an Explorer folder or the desktop focused, typing letters opens the bar with those
   letters already entered (switch it off in the tray menu or the settings).
@@ -202,7 +203,8 @@ does all of this in CI and publishes a GitHub release.
 
 - Local disks are read from the MFT only when they are NTFS; other local file systems (exFAT, FAT) are walked, which
   is slower to build and does not see changes until the next refresh. ReFS volumes and optical drives are not indexed.
-- Network folders are re-walked rather than watched, so changes appear after the next refresh.
+- A network server does not report everything: a change it keeps quiet about (some NAS, for files written by the NAS
+  itself) appears at the next walk, up to an hour later on a share that otherwise reports its changes.
 - Sizes and times on local disks come from the NTFS file records. A file whose data attribute sits in an extension
   record (a heavily fragmented or very attribute-rich file) reports size 0, and the size is not shown for it.
 - The scheduled task points at the exe's current path; moving or rebuilding it while the helper runs

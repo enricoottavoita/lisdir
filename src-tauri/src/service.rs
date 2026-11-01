@@ -82,7 +82,7 @@ pub fn search_volumes(vols: &Volumes, q: &Query) -> Vec<Hit> {
     for vol in vols.read().unwrap().iter() {
         let v = vol.read().unwrap();
         hits.extend(engine::search(&v.idx, q, 20).into_iter().map(|(score, f)| {
-            Hit::new(v.idx.name(&f).unwrap_or_default().to_string(), engine::full_path(&v.idx, f, &v.root), v.idx[&f].is_dir, score).with_size(v.idx[&f].size)
+            Hit::new(v.idx.name(&f).unwrap_or_default().to_string(), engine::full_path(&v.idx, f, &v.root), v.idx.at(&f).is_dir, score).with_size(v.idx.at(&f).size)
         }));
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -103,6 +103,7 @@ fn tail(vol: Shared) {
         let v = vol.read().unwrap();
         (v.root.chars().next().unwrap_or('C'), v.root.clone())
     };
+    engine::recount_shared(&vol);
     let (mut last_save, mut unlogged) = (Instant::now(), false);
     loop {
         std::thread::sleep(Duration::from_secs(1));
@@ -136,20 +137,26 @@ fn load_ntfs(vols: Volumes, busy: Arc<AtomicUsize>) {
     busy.fetch_add(1, SeqCst);
     let settings = crate::settings::Settings::load();
     crate::rules::set(&settings.no_index, &settings.exclude);
-    for l in 'A'..='Z' {
-        if engine::is_network_drive(l) || settings.disk_is_off(l) {
-            continue; // network drives are the UI's job: it has the user's credentials and drive mappings
-        }
-        if let Ok(mut v) = engine::open(l) {
-            let _ = engine::save(&mut v);
-            let live = engine::live(&v);
-            let v: Shared = Arc::new(RwLock::new(v));
-            vols.write().unwrap().push(v.clone());
-            if live {
-                std::thread::spawn(move || tail(v));
+    std::thread::scope(|s| {
+        for l in 'A'..='Z' {
+            if engine::is_network_drive(l) || settings.disk_is_off(l) {
+                continue; // network drives are the UI's job: it has the user's credentials and drive mappings
             }
+            let vols = &vols;
+            s.spawn(move || {
+                let Ok(mut v) = engine::open(l) else { return };
+                if v.dirty {
+                    let _ = engine::save(&mut v);
+                }
+                let live = engine::live(&v);
+                let v: Shared = Arc::new(RwLock::new(v));
+                vols.write().unwrap().push(v.clone());
+                if live {
+                    std::thread::spawn(move || tail(v));
+                }
+            });
         }
-    }
+    });
     busy.fetch_sub(1, SeqCst);
 }
 

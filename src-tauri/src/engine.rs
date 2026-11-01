@@ -2,18 +2,21 @@
 //! an on-disk cache, and fuzzy name search. Needs an elevated process (raw volume handle).
 use crate::{mft, query::{Only, Query}, rules};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::c_void,
     io,
     mem::size_of,
     path::PathBuf,
-    ptr::null_mut,
-    sync::{atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst}, Mutex, RwLock},
+    ptr::{null, null_mut},
+    sync::{atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst}, mpsc::{channel, Receiver}, Mutex, RwLock},
     time::{Duration, UNIX_EPOCH},
 };
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, ERROR_HANDLE_EOF, HANDLE, INVALID_HANDLE_VALUE},
-    Storage::FileSystem::{CreateFileW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING},
+    Storage::FileSystem::{
+        CreateFileW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW, ReadDirectoryChangesW, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_DIR_NAME,
+        FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    },
     System::{
         IO::DeviceIoControl,
         Ioctl::{
@@ -53,13 +56,24 @@ pub struct Entry {
     pub hidden: bool,
 }
 
-/// What the index keeps of an entry (its name is in `Index::names`, see `Index::name`).
+/// An entry as the index hands it out: a copy put together from `Item` and `Index::hot` (its name is in `Index::names`).
+#[derive(Clone, Copy)]
 pub struct Rec {
     parent: u64,
     time: i64,
     pub size: u64,
     pub is_dir: bool,
     pub hidden: bool,
+}
+
+/// What the index keeps per entry, 28 bytes: the two flags are in `Index::hot`, and a time in 4 bytes lasts until 2106.
+/// Packed, or the time would take 8.
+#[repr(C, packed(4))]
+struct Item {
+    frn: u64,
+    parent: u64,
+    size: u64,
+    time: u32,
 }
 
 /// One bit per letter a-z (case does not matter), one for all digits, one for anything else. A word can only match
@@ -106,7 +120,7 @@ struct Lookup {
 const FREE: u32 = u32::MAX;
 const GONE: u32 = u32::MAX - 1;
 
-type Items = [(u64, Option<Rec>)];
+type Items = [Item];
 
 impl Lookup {
     /// Cells for `n` positions, at most 70% full (a power of two, so that the number needs no division).
@@ -133,7 +147,7 @@ impl Lookup {
             match self.cells[c] {
                 FREE => return None,
                 GONE => {}
-                p if items[p as usize].0 == frn => return Some(c),
+                p if items[p as usize].frn == frn => return Some(c),
                 _ => {}
             }
             c = (c + 1) & mask;
@@ -145,9 +159,9 @@ impl Lookup {
     }
 
     /// Record that `frn` (not in the table yet) will be at position `pos`, the next one of `items`.
-    fn add(&mut self, items: &Items, frn: u64, pos: u32) {
+    fn add(&mut self, items: &Items, hot: &[u32], frn: u64, pos: u32) {
         if (self.used + 1) * 10 > self.cells.len() * 7 {
-            self.rebuild(items, self.live + 1);
+            self.rebuild(items, hot, self.live + 1);
         }
         let mask = self.cells.len() - 1;
         let mut c = Self::hash(frn) & mask;
@@ -168,14 +182,14 @@ impl Lookup {
         Some(pos)
     }
 
-    /// Make the table again from the entries in `items`, with room for `n`.
-    fn rebuild(&mut self, items: &Items, n: usize) {
+    /// Make the table again from the live entries in `items`, with room for `n`.
+    fn rebuild(&mut self, items: &Items, hot: &[u32], n: usize) {
         self.cells = vec![FREE; Self::cells_for(n)];
         let mask = self.cells.len() - 1;
         self.live = 0;
-        for (p, (frn, e)) in items.iter().enumerate() {
-            if e.is_some() {
-                let mut c = Self::hash(*frn) & mask;
+        for (p, item) in items.iter().enumerate() {
+            if hot[p] & DEAD == 0 {
+                let mut c = Self::hash(item.frn) & mask;
                 while self.cells[c] != FREE {
                     c = (c + 1) & mask;
                 }
@@ -193,6 +207,15 @@ const COMPACT_MIN: usize = 10_000;
 /// Marks a removed entry in `Index::hot` (the letter bits use the low 28 bits).
 const DEAD: u32 = 1 << 31;
 
+/// The letter bits of `Index::hot`.
+const LETTERS: u32 = (1 << 28) - 1;
+
+/// Marks a folder in `Index::hot`.
+const DIR: u32 = 1 << 29;
+
+/// Marks an entry kept out of the results in `Index::hot`.
+const HIDDEN: u32 = 1 << 28;
+
 /// Marks a name made only of ASCII characters in `Index::hot`: it can be compared without case by bytes.
 const ASCII: u32 = 1 << 30;
 
@@ -201,14 +224,15 @@ const ASCII: u32 = 1 << 30;
 /// entry leaves a hole that is cleaned up later.
 ///
 /// What a search needs from every entry sits apart from the entries, in two small arrays and one block of bytes,
-/// all in the same order as `items`: `hot` (which letters the name holds, see `letter_bits`; `DEAD` for a hole; `ASCII`),
+/// all in the same order as `items`: `hot` (which letters the name holds, see `letter_bits`; `DEAD` for a hole; `ASCII`,
+/// `DIR`, `HIDDEN`),
 /// `pos` (where the name starts in `names`) and `names` (each name as a 2-byte length and its UTF-8 bytes, back to back).
 /// So a search reads about 8 bytes per entry to rule most of them out, and a name is kept once, as it was given: it is
 /// compared without case as it is read.
 #[derive(Default)]
 pub struct Index {
     slot: Lookup,
-    items: Vec<(u64, Option<Rec>)>,
+    items: Vec<Item>,
     hot: Vec<u32>,
     pos: Vec<u32>,
     names: Vec<u8>,
@@ -244,9 +268,14 @@ impl Index {
         }
     }
 
+    /// An empty index with room for as much as this one holds, so a new walk of the same disk does not grow by doubling.
+    pub fn sized_like(&self) -> Self {
+        Self::with_names(self.len(), self.names.len())
+    }
+
     /// Give back the room the vectors do not use (after an index was built by adding entries one by one).
     pub fn shrink_to_fit(&mut self) {
-        self.slot.rebuild(&self.items, self.slot.live);
+        self.slot.rebuild(&self.items, &self.hot, self.slot.live);
         self.items.shrink_to_fit();
         self.hot.shrink_to_fit();
         self.pos.shrink_to_fit();
@@ -282,15 +311,29 @@ impl Index {
         (at, letter_bits(name) | if name.is_ascii() { ASCII } else { 0 })
     }
 
+    /// The entry in position `i` of `items`.
+    fn rec_at(&self, i: usize) -> Rec {
+        let (e, hot) = (&self.items[i], self.hot[i]);
+        Rec { parent: e.parent, time: e.time as i64, size: e.size, is_dir: hot & DIR != 0, hidden: hot & HIDDEN != 0 }
+    }
+
     /// The entry and its name.
-    fn get_named(&self, frn: &u64) -> Option<(&Rec, &str)> {
+    fn get_named(&self, frn: &u64) -> Option<(Rec, &str)> {
         let i = self.slot.get(&self.items, *frn)? as usize;
-        Some((self.items[i].1.as_ref()?, self.name_at(i)))
+        Some((self.rec_at(i), self.name_at(i)))
     }
 
     /// The name of the entry with this file reference number.
     pub fn name(&self, frn: &u64) -> Option<&str> {
         self.get_named(frn).map(|(_, name)| name)
+    }
+
+    /// The entry called `name` (any case) in the folder `parent`. A pass over `hot`: under a millisecond for a million
+    /// entries, since few names hold exactly the same letters.
+    fn child(&self, parent: u64, name: &str) -> Option<u64> {
+        let (bits, lower) = (letter_bits(name), name.to_lowercase());
+        let i = (0..self.hot.len()).find(|&i| self.hot[i] & (DEAD | LETTERS) == bits && self.items[i].parent == parent && eq_fold(self.name_at(i), &lower, self.hot[i] & ASCII != 0))?;
+        Some(self.items[i].frn)
     }
 
     pub fn len(&self) -> usize {
@@ -305,63 +348,79 @@ impl Index {
         self.slot.get(&self.items, *frn).is_some()
     }
 
-    pub fn get(&self, frn: &u64) -> Option<&Rec> {
-        self.slot.get(&self.items, *frn).and_then(|i| self.items[i as usize].1.as_ref())
+    pub fn get(&self, frn: &u64) -> Option<Rec> {
+        self.slot.get(&self.items, *frn).map(|i| self.rec_at(i as usize))
     }
 
-    pub fn get_mut(&mut self, frn: &u64) -> Option<&mut Rec> {
-        let i = self.slot.get(&self.items, *frn)?;
-        self.items[i as usize].1.as_mut()
+    /// The entry with this file reference number, which must exist.
+    pub fn at(&self, frn: &u64) -> Rec {
+        self.get(frn).expect("no entry with this file reference")
     }
 
-    pub fn insert(&mut self, frn: u64, e: Entry) -> Option<Rec> {
+    /// Set the modified time and the size of an entry.
+    fn set_meta(&mut self, frn: &u64, time: i64, size: u64) {
+        if let Some(i) = self.slot.get(&self.items, *frn) {
+            let e = &mut self.items[i as usize];
+            (e.time, e.size) = (unix32(time), size);
+        }
+    }
+
+    /// Add `delta` to the size of an entry; its parent, or None if there is no such entry.
+    fn add_size(&mut self, frn: u64, delta: i64) -> Option<u64> {
+        let i = self.slot.get(&self.items, frn)?;
+        let e = &mut self.items[i as usize];
+        e.size = { e.size }.saturating_add_signed(delta);
+        Some(e.parent)
+    }
+
+    pub fn insert(&mut self, frn: u64, e: Entry) {
         let rec = Rec { parent: e.parent, time: e.time, size: e.size, is_dir: e.is_dir, hidden: e.hidden };
         self.insert_rec(frn, &e.name, rec)
     }
 
     /// `insert` for a name that is not in a `String` (the loader reads it straight from the file).
-    fn insert_rec(&mut self, frn: u64, name: &str, rec: Rec) -> Option<Rec> {
+    fn insert_rec(&mut self, frn: u64, name: &str, rec: Rec) {
         let (at, bits) = self.store_name(name);
+        let bits = bits | if rec.is_dir { DIR } else { 0 } | if rec.hidden { HIDDEN } else { 0 };
+        let item = Item { frn, parent: rec.parent, size: rec.size, time: unix32(rec.time) };
         if let Some(i) = self.slot.get(&self.items, frn) {
             let i = i as usize;
             self.waste += 2 + self.name_at(i).len();
-            (self.pos[i], self.hot[i]) = (at, bits);
-            let old = self.items[i].1.replace(rec);
+            (self.pos[i], self.hot[i], self.items[i]) = (at, bits, item);
             // renames leave their old name behind: rebuild the block when that is a quarter of it
             if self.waste > 1 << 20 && self.waste * 4 > self.names.len() {
                 self.reindex();
             }
-            return old;
+            return;
         }
         if self.tight && self.items.len() == self.items.capacity() {
             self.grow();
         }
-        self.slot.add(&self.items, frn, self.items.len() as u32);
-        self.items.push((frn, Some(rec)));
+        self.slot.add(&self.items, &self.hot, frn, self.items.len() as u32);
+        self.items.push(item);
         self.hot.push(bits);
         self.pos.push(at);
-        None
     }
 
     pub fn remove(&mut self, frn: &u64) -> Option<Rec> {
         let i = self.slot.remove(&self.items, *frn)? as usize;
         self.waste += 2 + self.name_at(i).len();
+        let old = self.rec_at(i);
         self.hot[i] = DEAD;
-        let old = self.items[i].1.take();
         let holes = self.items.len() - self.slot.live;
         if holes >= COMPACT_MIN && holes * 8 > self.items.len() {
             self.reindex();
         }
-        old
+        Some(old)
     }
 
     /// Squeeze the holes out of `items`, `hot`, `pos` and `names`, and point `slot` at the new positions.
     fn reindex(&mut self) {
-        let n = self.items.iter().filter(|x| x.1.is_some()).count();
+        let n = self.hot.iter().filter(|&h| h & DEAD == 0).count();
         let mut names = Vec::with_capacity((self.names.len() - self.waste.min(self.names.len())).max(16));
         let (mut items, mut hot, mut pos) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
         for (i, item) in std::mem::take(&mut self.items).into_iter().enumerate() {
-            if item.1.is_none() {
+            if self.hot[i] & DEAD != 0 {
                 continue;
             }
             let p = self.pos[i] as usize;
@@ -372,51 +431,52 @@ impl Index {
             items.push(item);
         }
         (self.items, self.hot, self.pos, self.names, self.waste, self.tight) = (items, hot, pos, names, 0, true);
-        self.slot.rebuild(&self.items, n);
+        self.slot.rebuild(&self.items, &self.hot, n);
     }
 
-    /// Keep the entries `keep` says yes to (it may also change them).
-    pub fn retain(&mut self, mut keep: impl FnMut(&u64, &mut Rec) -> bool) {
-        for (i, (f, e)) in self.items.iter_mut().enumerate() {
-            if e.as_mut().is_some_and(|x| !keep(f, x)) {
-                *e = None;
-                self.hot[i] = DEAD;
-                // `reindex` below rebuilds the names and the table without it
+    /// Keep the entries `keep` says yes to, given their position, file reference and hidden flag, which it may change.
+    /// Only rebuilds if some are dropped: that takes as much memory again as the whole index.
+    fn retain(&mut self, mut keep: impl FnMut(usize, u64, &mut bool) -> bool) {
+        let mut dropped = false;
+        for i in 0..self.items.len() {
+            if self.hot[i] & DEAD != 0 {
+                continue;
+            }
+            let mut hidden = self.hot[i] & HIDDEN != 0;
+            if keep(i, self.items[i].frn, &mut hidden) {
+                self.hot[i] = self.hot[i] & !HIDDEN | if hidden { HIDDEN } else { 0 };
+            } else {
+                self.hot[i] = DEAD; // `reindex` below rebuilds the names and the table without it
+                dropped = true;
             }
         }
-        self.reindex();
+        if dropped {
+            self.reindex();
+        }
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = &u64> {
-        self.items.iter().filter(|x| x.1.is_some()).map(|x| &x.0)
+    pub fn keys(&self) -> impl Iterator<Item = u64> + '_ {
+        self.iter().map(|(f, _)| f)
     }
 
-    #[cfg(test)]
-    pub fn iter(&self) -> impl Iterator<Item = (&u64, &Rec)> {
-        self.items.iter().filter_map(|(f, e)| e.as_ref().map(|e| (f, e)))
+    pub fn iter(&self) -> impl Iterator<Item = (u64, Rec)> + '_ {
+        (0..self.items.len()).filter(|&i| self.hot[i] & DEAD == 0).map(|i| (self.items[i].frn, self.rec_at(i)))
     }
 
     /// Every entry with its name.
-    pub fn iter_named(&self) -> impl Iterator<Item = (&u64, &Rec, &str)> {
-        self.items.iter().enumerate().filter_map(move |(i, (f, e))| e.as_ref().map(|e| (f, e, self.name_at(i))))
+    pub fn iter_named(&self) -> impl Iterator<Item = (u64, Rec, &str)> {
+        (0..self.items.len()).filter(|&i| self.hot[i] & DEAD == 0).map(|i| (self.items[i].frn, self.rec_at(i), self.name_at(i)))
     }
 
     #[cfg(test)]
-    pub fn values(&self) -> impl Iterator<Item = &Rec> {
-        self.items.iter().filter_map(|(_, e)| e.as_ref())
+    pub fn values(&self) -> impl Iterator<Item = Rec> + '_ {
+        self.iter().map(|(_, e)| e)
     }
 
     pub fn extend(&mut self, entries: impl IntoIterator<Item = (u64, Entry)>) {
         for (f, e) in entries {
             self.insert(f, e);
         }
-    }
-}
-
-impl std::ops::Index<&u64> for Index {
-    type Output = Rec;
-    fn index(&self, frn: &u64) -> &Rec {
-        self.get(frn).expect("no entry with this file reference")
     }
 }
 
@@ -459,6 +519,11 @@ pub enum Change {
 
 fn rd<T: Copy>(b: &[u8], off: usize) -> T {
     unsafe { (b.as_ptr().add(off) as *const T).read_unaligned() }
+}
+
+/// Unix seconds as `Item` keeps them.
+fn unix32(t: i64) -> u32 {
+    t.clamp(0, u32::MAX as i64) as u32
 }
 
 /// FILETIME (100 ns ticks since 1601) to unix seconds.
@@ -543,7 +608,7 @@ fn meta_of(h: &Handle, frn: u64, buf: &mut [u8]) -> Option<mft::Meta> {
 
 /// Read `meta_of` for every entry, on several threads (it is one system call per file).
 fn fill_meta(h: &Handle, idx: &mut Index) {
-    let frns: Vec<u64> = idx.keys().copied().collect();
+    let frns: Vec<u64> = idx.keys().collect();
     let found: Vec<Vec<(u64, mft::Meta)>> = std::thread::scope(|s| {
         let jobs: Vec<_> = frns
             .chunks(frns.len().div_ceil(8).max(1))
@@ -555,10 +620,7 @@ fn fill_meta(h: &Handle, idx: &mut Index) {
         jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
     });
     for (f, m) in found.into_iter().flatten() {
-        if let Some(e) = idx.get_mut(&f) {
-            e.time = m.mtime;
-            e.size = m.size;
-        }
+        idx.set_meta(&f, m.mtime, m.size);
     }
 }
 
@@ -589,36 +651,36 @@ fn prune_with(idx: &mut Index, root: &str, act: &rules::Active) {
         return;
     }
     let need_path = act.skip.has_paths() || act.hide.has_paths();
-    let mut memo: HashMap<u64, u8> = HashMap::with_capacity(idx.len());
-    let frns: Vec<u64> = idx.keys().copied().collect();
-    for f in frns {
-        if memo.contains_key(&f) {
+    const UNKNOWN: u8 = u8::MAX;
+    let mut memo = vec![UNKNOWN; idx.items.len()]; // by position in `items`
+    for i in 0..idx.items.len() {
+        if memo[i] != UNKNOWN || idx.hot[i] & DEAD != 0 {
             continue;
         }
         // climb to the first folder whose verdict is known, then come back down
-        let (mut chain, mut base, mut cur) = (vec![f], KEEP, f);
-        while let Some(parent) = idx.get(&cur).map(|e| e.parent) {
-            if let Some(&v) = memo.get(&parent) {
-                base = v;
+        let (mut chain, mut base, mut cur) = (vec![i], KEEP, i);
+        while let Some(p) = idx.slot.get(&idx.items, idx.items[cur].parent).map(|p| p as usize) {
+            if memo[p] != UNKNOWN {
+                base = memo[p];
                 break;
             }
-            if !idx.contains_key(&parent) || chain.len() > 4096 {
+            if p == cur || chain.len() > 4096 {
                 break;
             }
-            chain.push(parent);
-            cur = parent;
+            chain.push(p);
+            cur = p;
         }
         for &c in chain.iter().rev() {
-            let Some((e, name)) = idx.get_named(&c) else { continue };
-            let path = (need_path && e.is_dir).then(|| full_path(idx, c, root).to_lowercase());
-            base = verdict_for(act, &name.to_lowercase(), path.as_deref(), base);
-            memo.insert(c, base);
+            let frn = idx.items[c].frn;
+            let path = (need_path && idx.hot[c] & DIR != 0).then(|| full_path(idx, frn, root).to_lowercase());
+            base = verdict_for(act, &idx.name_at(c).to_lowercase(), path.as_deref(), base);
+            memo[c] = base;
         }
     }
-    idx.retain(|f, e| match memo.get(f) {
-        Some(&SKIP) => false,
-        Some(&HIDE) => {
-            e.hidden = true;
+    idx.retain(|i, _, hidden| match memo[i] {
+        SKIP => false,
+        HIDE => {
+            *hidden = true;
             true
         }
         _ => true,
@@ -696,29 +758,57 @@ pub fn read_changes(v: &Volume) -> Result<(Vec<Change>, i64), String> {
 /// and a damaged index could hold a loop.
 fn add_up(idx: &mut Index, mut parent: u64, delta: i64) {
     for _ in 0..256 {
-        let Some(p) = idx.get_mut(&parent) else { return };
-        p.size = p.size.saturating_add_signed(delta);
-        if p.parent == parent {
+        let Some(p) = idx.add_size(parent, delta) else { return };
+        if p == parent {
             return;
         }
-        parent = p.parent;
+        parent = p;
     }
 }
 
-/// Set each folder's size to the sum of the files below it: one pass over the entries to total each folder's own
-/// files, then each folder walks its total up. Once per load or scan; `apply` keeps the totals current.
-pub fn sum_folders(idx: &mut Index) {
+/// What each folder holds: one pass over the entries to total each folder's own files, then each total walks up.
+/// Only reads the index, so searches can run meanwhile.
+fn folder_totals(idx: &Index) -> HashMap<u64, u64> {
     let mut own: HashMap<u64, u64> = HashMap::new();
-    for (_, e) in idx.items.iter_mut() {
-        match e {
-            Some(e) if e.is_dir => e.size = 0,
-            Some(e) if e.size > 0 => *own.entry(e.parent).or_default() += e.size,
-            _ => {}
+    for (i, e) in idx.items.iter().enumerate() {
+        if idx.hot[i] & (DEAD | DIR) == 0 && { e.size } > 0 {
+            *own.entry(e.parent).or_default() += e.size;
         }
     }
-    for (parent, size) in own {
-        add_up(idx, parent, size as i64);
+    let mut totals: HashMap<u64, u64> = HashMap::with_capacity(own.len());
+    for (mut cur, size) in own {
+        for _ in 0..256 {
+            let Some(i) = idx.slot.get(&idx.items, cur) else { break };
+            *totals.entry(cur).or_default() += size;
+            let up = idx.items[i as usize].parent;
+            if up == cur {
+                break;
+            }
+            cur = up;
+        }
     }
+    totals
+}
+
+fn set_totals(idx: &mut Index, totals: &HashMap<u64, u64>) {
+    for (i, e) in idx.items.iter_mut().enumerate() {
+        if idx.hot[i] & (DEAD | DIR) == DIR {
+            e.size = totals.get(&{ e.frn }).copied().unwrap_or(0);
+        }
+    }
+}
+
+/// Set each folder's size to the sum of the files below it. Once per scan or walk; `apply` keeps the totals current.
+pub fn sum_folders(idx: &mut Index) {
+    let totals = folder_totals(idx);
+    set_totals(idx, &totals);
+}
+
+/// `sum_folders` for a volume that is already being searched: a cache brings its totals along, so this only repairs any
+/// drift, without blocking the searches. Call it from the thread that updates the volume.
+pub fn recount_shared(vol: &RwLock<Volume>) {
+    let totals = folder_totals(&vol.read().unwrap().idx);
+    set_totals(&mut vol.write().unwrap().idx, &totals);
 }
 
 pub fn apply(v: &mut Volume, changes: Vec<Change>, next_usn: i64) {
@@ -774,12 +864,10 @@ fn apply_with(v: &mut Volume, changes: Vec<Change>, next_usn: i64, act: &rules::
                 }
             }
             Change::Meta(frn, time, size) => {
-                let Some(e) = v.idx.get_mut(&frn) else { continue };
-                e.time = time;
+                let Some(e) = v.idx.get(&frn) else { continue };
+                v.idx.set_meta(&frn, time, if e.is_dir { e.size } else { size });
                 if !e.is_dir {
-                    let (parent, delta) = (e.parent, size as i64 - e.size as i64);
-                    e.size = size;
-                    add_up(&mut v.idx, parent, delta);
+                    add_up(&mut v.idx, e.parent, size as i64 - e.size as i64);
                 }
             }
         }
@@ -806,22 +894,25 @@ fn write_cache(v: &Volume) -> io::Result<()> {
     }
     let p = cache_path(&v.root);
     std::fs::create_dir_all(p.parent().unwrap())?;
-    let mut b = Vec::with_capacity(v.idx.len() * 56);
-    b.extend(b"LSD3");
-    b.extend(v.journal_id.to_le_bytes());
-    b.extend(v.next_usn.to_le_bytes());
-    b.extend((v.idx.len() as u64).to_le_bytes());
-    for (frn, e, name) in v.idx.iter_named() {
-        b.extend(frn.to_le_bytes());
-        b.extend(e.parent.to_le_bytes());
-        b.extend(e.time.to_le_bytes());
-        b.extend(e.size.to_le_bytes());
-        b.push(e.is_dir as u8);
-        b.extend((name.len() as u16).to_le_bytes());
-        b.extend(name.as_bytes());
-    }
+    use std::io::Write;
     let tmp = p.with_extension("tmp");
-    std::fs::write(&tmp, b)?;
+    // piece by piece: the whole file in memory next to the index would be the highest peak of the program
+    let mut w = io::BufWriter::with_capacity(1 << 20, std::fs::File::create(&tmp)?);
+    w.write_all(b"LSD3")?;
+    w.write_all(&v.journal_id.to_le_bytes())?;
+    w.write_all(&v.next_usn.to_le_bytes())?;
+    w.write_all(&(v.idx.len() as u64).to_le_bytes())?;
+    for (frn, e, name) in v.idx.iter_named() {
+        w.write_all(&frn.to_le_bytes())?;
+        w.write_all(&e.parent.to_le_bytes())?;
+        w.write_all(&e.time.to_le_bytes())?;
+        w.write_all(&e.size.to_le_bytes())?;
+        w.write_all(&[e.is_dir as u8])?;
+        w.write_all(&(name.len() as u16).to_le_bytes())?;
+        w.write_all(name.as_bytes())?;
+    }
+    w.flush()?;
+    drop(w);
     std::fs::rename(tmp, p)?; // atomic: a crash never leaves a half-written cache
     if v.walk {
         return Ok(()); // walked volumes are replaced as a whole, there is no journal to log
@@ -988,6 +1079,7 @@ fn load(root: &str, walk: bool) -> Option<Volume> {
     let mut v = Volume { root: root.to_string(), walk, idx, journal_id, next_usn, dirty: false };
     if !walk {
         replay_log(&mut v);
+        v.dirty = false; // what the log brought in is safe on disk
     }
     Some(v)
 }
@@ -999,10 +1091,12 @@ pub fn open(letter: char) -> Result<Volume, String> {
         let live = open_volume(letter).ok().and_then(|h| query_journal(&h));
         if live.is_some_and(|j| j.UsnJournalID == v.journal_id && v.next_usn >= j.FirstUsn) {
             if let Ok((c, n)) = read_changes(&v) {
+                // into the log, so a start does not rewrite the snapshot (see `recount_shared` for the folder totals)
+                let logged = append_log(&v.root, &c, n);
                 apply(&mut v, c, n);
-                let root = v.root.clone();
+                let (root, before) = (v.root.clone(), v.idx.len());
                 prune(&mut v.idx, &root);
-                sum_folders(&mut v.idx); // the cache holds totals too, but recounting is cheap and repairs any drift
+                v.dirty = !logged || v.idx.len() != before;
                 return Ok(v);
             }
         }
@@ -1016,8 +1110,15 @@ pub fn live(v: &Volume) -> bool {
 
 // ---- network (SMB) volumes: no MFT or journal, so walk the directory tree
 
-/// Re-walk interval for network roots. ponytail: full re-walk, no change detection over SMB.
+/// Re-walk interval for network roots, until the share has shown that it reports its changes (see `watch`).
 pub const WALK_INTERVAL: Duration = Duration::from_secs(600);
+
+/// Re-walk interval for a share that reports its changes: only a safety net. It misses what the server does not tell, such
+/// as files written on a NAS by the NAS itself.
+pub const WATCHED_WALK_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// More changed paths than this at once are left to a walk.
+pub const MAX_CHANGES: usize = 1000;
 
 /// How soon to retry a walk that could not be trusted (share offline, drive unplugged).
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(60);
@@ -1160,12 +1261,13 @@ impl Walk {
 /// Ids are synthetic; 0 is the root. Symlinks are listed but not followed.
 /// With `stream` (a volume that has no index yet) each folder's entries go straight into that volume, so results
 /// show up while the first walk is still running; the returned `idx` is then empty.
-pub fn walk(root: &str, stream: Option<&RwLock<Volume>>) -> Walk {
-    walk_with(root, stream, &rules::active())
+/// `room` is the index to fill: `Index::sized_like` the last one, when there is one.
+pub fn walk(root: &str, stream: Option<&RwLock<Volume>>, room: Index) -> Walk {
+    walk_with(root, stream, room, &rules::active())
 }
 
-fn walk_with(root: &str, stream: Option<&RwLock<Volume>>, act: &rules::Active) -> Walk {
-    let idx = Mutex::new(Index::new());
+fn walk_with(root: &str, stream: Option<&RwLock<Volume>>, room: Index, act: &rules::Active) -> Walk {
+    let idx = Mutex::new(room);
     let next_id = AtomicU64::new(1);
     let queue = Mutex::new(vec![(0u64, PathBuf::from(format!("{root}\\")), false)]);
     let need_path = act.skip.has_paths() || act.hide.has_paths();
@@ -1234,6 +1336,141 @@ fn walk_with(root: &str, stream: Option<&RwLock<Volume>>, act: &rules::Active) -
         }
     }
     Walk { idx, dirs: dirs.into_inner(), failed: failed.into_inner() }
+}
+
+/// The paths in a buffer of FILE_NOTIFY_INFORMATION records, relative to the watched folder.
+fn notified_paths(buf: &[u8]) -> Vec<String> {
+    let (mut out, mut off) = (vec![], 0);
+    while off + 12 <= buf.len() {
+        let (next, len) = (rd::<u32>(buf, off) as usize, rd::<u32>(buf, off + 8) as usize);
+        let Some(name) = buf.get(off + 12..off + 12 + len) else { break };
+        out.push(String::from_utf16_lossy(&name.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>()));
+        if next == 0 {
+            break;
+        }
+        off += next;
+    }
+    out
+}
+
+/// Watch a folder tree: the channel gets the relative path of whatever changes, and None when too much changed at once to
+/// tell (time for a walk). It closes when the watch fails, as it does at once on a server that cannot report changes.
+pub fn watch(root: &str) -> Option<Receiver<Option<String>>> {
+    let h = unsafe { CreateFileW(wide(&format!("{root}\\")).as_ptr(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null(), OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, null_mut()) };
+    if h == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let (tx, rx) = channel();
+    let handle = h as usize; // a raw handle is not `Send`
+    std::thread::spawn(move || {
+        let h = handle as HANDLE;
+        let mut buf = vec![0u32; 64 * 1024 / 4]; // 64 KB is the most a network watch takes; aligned for the records
+        let what = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
+        loop {
+            let mut got = 0u32;
+            // waits for a change; what happens between two calls is kept for the next one
+            let ok = unsafe { ReadDirectoryChangesW(h, buf.as_mut_ptr().cast(), 64 * 1024, 1, what, &mut got, null_mut(), None) };
+            if ok == 0 {
+                break;
+            }
+            let sent = if got == 0 {
+                tx.send(None).is_ok()
+            } else {
+                let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), got as usize) };
+                notified_paths(bytes).into_iter().all(|p| tx.send(Some(p)).is_ok())
+            };
+            if !sent {
+                break;
+            }
+        }
+        unsafe { CloseHandle(h) };
+    });
+    Some(rx)
+}
+
+/// The entry at this path relative to the root; 0 (the root itself) for an empty path.
+fn find(idx: &Index, rel: &str) -> Option<u64> {
+    rel.split('\\').filter(|p| !p.is_empty()).try_fold(0, |at, part| idx.child(at, part))
+}
+
+/// Take an entry out, with everything below it.
+fn remove_tree(idx: &mut Index, frn: u64) {
+    let Some(top) = idx.get(&frn) else { return };
+    add_up(idx, top.parent, -(top.size as i64));
+    let mut gone = HashSet::from([frn]);
+    // children can sit before or after their folder in the vector: repeat until a pass finds no more
+    while top.is_dir {
+        let more: Vec<u64> = idx.iter().filter(|(f, e)| gone.contains(&e.parent) && !gone.contains(f)).map(|(f, _)| f).collect();
+        if more.is_empty() {
+            break;
+        }
+        gone.extend(more);
+    }
+    for f in gone {
+        idx.remove(&f);
+    }
+}
+
+/// Bring the index up to date with one path that was reported as changed. The report only says where to look: whether it
+/// was added, modified, renamed or removed, what is there now tells what to do, and doing it twice does no harm.
+/// The share is read without holding any lock.
+pub fn refresh_path(vol: &RwLock<Volume>, rel: &str) {
+    refresh_path_with(vol, rel, &rules::active());
+}
+
+fn refresh_path_with(vol: &RwLock<Volume>, rel: &str, act: &rules::Active) {
+    let root = vol.read().unwrap().root.clone();
+    let full = format!("{root}\\{rel}");
+    let now = match std::fs::symlink_metadata(&full) {
+        Ok(m) => Some(m),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(_) => return, // no way to tell: the next walk will
+    };
+    let (folder, name) = rel.rsplit_once('\\').unwrap_or(("", rel));
+    let (parent, known) = {
+        let v = vol.read().unwrap();
+        (find(&v.idx, folder), find(&v.idx, rel).and_then(|f| v.idx.get(&f).map(|e| (f, e))))
+    };
+    let Some(parent) = parent else { return }; // in a folder that is not indexed, or that a change still to come will add
+    let Some(m) = now else {
+        if let Some((f, _)) = known {
+            remove_tree(&mut vol.write().unwrap().idx, f);
+        }
+        return;
+    };
+    let is_dir = m.is_dir();
+    let time = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
+    match known {
+        Some((f, old)) if old.is_dir == is_dir => {
+            let mut v = vol.write().unwrap();
+            v.idx.set_meta(&f, time, if is_dir { old.size } else { m.len() });
+            if !is_dir {
+                add_up(&mut v.idx, old.parent, m.len() as i64 - old.size as i64);
+            }
+            return;
+        }
+        Some((f, _)) => remove_tree(&mut vol.write().unwrap().idx, f), // a file became a folder or the other way round
+        None => {}
+    }
+    let hidden = vol.read().unwrap().idx.get(&parent).is_some_and(|p| p.hidden);
+    let path = (is_dir && (act.skip.has_paths() || act.hide.has_paths())).then(|| full.to_lowercase());
+    let verdict = verdict_for(act, &name.to_lowercase(), path.as_deref(), if hidden { HIDE } else { KEEP });
+    if verdict == SKIP {
+        return;
+    }
+    // a new folder, or one renamed or moved here: nothing is reported for what it holds
+    let below = if is_dir { walk_with(&full, None, Index::new(), act).idx } else { Index::new() };
+    let size = if is_dir { below.iter().filter(|(_, e)| e.parent == 0).map(|(_, e)| e.size).sum() } else { m.len() };
+    let mut v = vol.write().unwrap();
+    let idx = &mut v.idx;
+    // ids are made up, so any free ones will do: the walk's own start at 1, and so the new folder's id can be their offset
+    let id = idx.keys().max().unwrap_or(0) + 1;
+    let hide = verdict == HIDE;
+    idx.insert_rec(id, name, Rec { parent, time, size, is_dir, hidden: hide });
+    for (f, e, n) in below.iter_named() {
+        idx.insert_rec(id + f, n, Rec { parent: if e.parent == 0 { id } else { id + e.parent }, hidden: e.hidden || hide, ..e });
+    }
+    add_up(idx, parent, size as i64);
 }
 
 // ---- search
@@ -1317,17 +1554,17 @@ fn contains_fold(name: &str, needle: &str, ascii: bool) -> bool {
 fn in_folder(idx: &Index, mut parent: u64, word: &str) -> bool {
     while let Some(i) = idx.slot.get(&idx.items, parent) {
         let i = i as usize;
-        let Some(p) = idx.items[i].1.as_ref() else { break };
         if contains_fold(idx.name_at(i), word, idx.hot[i] & ASCII != 0) {
             return true;
         }
-        parent = p.parent;
+        parent = idx.items[i].parent;
     }
     false
 }
 
 /// Score of an entry for a query, or None if it does not qualify. Cheap checks first.
-fn matches(q: &Query, idx: &Index, i: usize, e: &Rec) -> Option<f32> {
+fn matches(q: &Query, idx: &Index, i: usize) -> Option<f32> {
+    let e = idx.rec_at(i);
     if e.hidden {
         return None;
     }
@@ -1411,12 +1648,11 @@ pub fn search(idx: &Index, q: &Query, limit: usize) -> Vec<(f32, u64)> {
             if idx.hot[i] & (need | DEAD) != need {
                 continue;
             }
-            let (f, Some(e)) = &idx.items[i] else { continue };
-            let Some(s) = matches(q, idx, i, e) else { continue };
+            let Some(s) = matches(q, idx, i) else { continue };
             if s < floor {
                 continue;
             }
-            hits.push((s, *f));
+            hits.push((s, idx.items[i].frn));
             if hits.len() >= limit * 8 {
                 hits = top(hits);
                 floor = hits.iter().map(|h| h.0).fold(f32::INFINITY, f32::min);
@@ -1539,7 +1775,7 @@ mod tests {
         buf.extend(rec(12, 10, 0, 0, "rm.txt"));
         let v = vol(&buf);
         assert_eq!(v.idx.len(), 3);
-        assert_eq!(v.idx[&12].time, NOW); // the USN record's timestamp became the last-change time
+        assert_eq!(v.idx.at(&12).time, NOW); // the USN record's timestamp became the last-change time
         assert_eq!(full_path(&v.idx, 12, "C:"), r"C:\Docs\rm.txt");
         assert_eq!(search(&v.idx, &q("rl"), 5)[0].1, 11);
         assert_eq!(search(&v.idx, &q("rm"), 5)[0].1, 12);
@@ -1629,7 +1865,7 @@ mod tests {
         let back = load("Z:", false).unwrap();
         std::fs::remove_file(cache_path("Z:")).unwrap();
         assert_eq!((back.idx.len(), back.next_usn, back.journal_id), (2, 200, 7));
-        assert_eq!((back.idx.name(&12).unwrap(), back.idx[&12].time, back.idx[&12].size), ("fresh.txt", NOW + 20, 4096));
+        assert_eq!((back.idx.name(&12).unwrap(), back.idx.at(&12).time, back.idx.at(&12).size), ("fresh.txt", NOW + 20, 4096));
     }
 
     #[test]
@@ -1641,7 +1877,7 @@ mod tests {
         for qs in ["rep 99", "report1", "ext:txt size:>100000", "date:week"] {
             let query = q(qs);
             let got: Vec<f32> = search(&i, &query, 20).iter().map(|h| h.0).collect();
-            let mut want: Vec<f32> = (0..i.items.len()).filter_map(|p| matches(&query, &i, p, i.items[p].1.as_ref()?)).collect();
+            let mut want: Vec<f32> = (0..i.items.len()).filter_map(|p| matches(&query, &i, p)).collect();
             want.sort_by(|a, b| b.total_cmp(a));
             want.truncate(20);
             assert_eq!(got, want, "{qs}"); // same best scores whether or not the work was split across threads
@@ -1661,8 +1897,8 @@ mod tests {
         assert!(append_log("Y:", &[], 190)); // nothing to write
 
         let back = load("Y:", false).unwrap();
-        assert_eq!(back.next_usn, 180);
-        assert!(!back.idx.contains_key(&11) && back.idx[&12].size == 4096 && back.idx.contains_key(&13));
+        assert_eq!((back.next_usn, back.dirty), (180, false)); // no need to write again what the log holds
+        assert!(!back.idx.contains_key(&11) && back.idx.at(&12).size == 4096 && back.idx.contains_key(&13));
 
         // a half-written last batch is dropped, the committed ones stay
         let log = log_path("Y:");
@@ -1690,7 +1926,8 @@ mod tests {
         for k in 0..n {
             i.insert(k, Entry::new(0, format!("f{k}"), false, 0));
         }
-        assert!(i.insert(5, Entry::new(0, "renamed".into(), false, 0)).is_some()); // replaced in place
+        i.insert(5, Entry::new(0, "renamed".into(), false, 0)); // replaced in place
+        assert_eq!((i.name(&5), i.len()), (Some("renamed"), n as usize));
         for k in 0..n / 2 {
             assert!(i.remove(&k).is_some()); // enough holes to trigger a compaction along the way
         }
@@ -1700,8 +1937,8 @@ mod tests {
         assert!(i.items.len() < n as usize, "holes were squeezed out");
         assert_eq!(i.name(&(n - 1)).unwrap(), format!("f{}", n - 1));
         assert!(i.get(&(n / 2 - 1)).is_none() && i.get(&(n / 2)).is_some());
-        i.get_mut(&(n / 2)).unwrap().size = 9;
-        assert_eq!(i[&(n / 2)].size, 9);
+        i.add_size(n / 2, 9);
+        assert_eq!(i.at(&(n / 2)).size, 9);
         i.insert(3, Entry::new(0, "again".into(), false, 0)); // a removed key can come back
         assert!(i.contains_key(&3) && i.keys().count() == n as usize / 2 + 1);
     }
@@ -1741,11 +1978,11 @@ mod tests {
         let mut i = rule_tree();
         prune_with(&mut i, "C:", &rules(&[], &["node_modules", r"c:\users\me\cache"]));
         assert_eq!(i.len(), 9); // everything is still indexed
-        assert!(i[&14].hidden && i[&15].hidden && i[&16].hidden && i[&17].hidden && !i[&13].hidden);
+        assert!(i.at(&14).hidden && i.at(&15).hidden && i.at(&16).hidden && i.at(&17).hidden && !i.at(&13).hidden);
         assert!(search(&i, &q("dep"), 5).is_empty() && search(&i, &q("x.tmp"), 5).is_empty());
         assert_eq!(search(&i, &q("main"), 5).len(), 1);
         prune_with(&mut i, "C:", &rules(&[], &[])); // no rules: nothing changes (hiding is recomputed on load)
-        assert!(i[&14].hidden);
+        assert!(i.at(&14).hidden);
     }
 
     #[test]
@@ -1761,7 +1998,7 @@ mod tests {
             Change::Upsert(25, 5, "top.txt".into(), false, NOW),        // directly in the root: kept
         ], 150, &act);
         assert!(!v.idx.contains_key(&20) && !v.idx.contains_key(&21));
-        assert!(v.idx[&22].hidden && v.idx[&23].hidden && !v.idx[&24].hidden && v.idx.contains_key(&25));
+        assert!(v.idx.at(&22).hidden && v.idx.at(&23).hidden && !v.idx.at(&24).hidden && v.idx.contains_key(&25));
         // renaming something into a skipped name removes it
         apply_with(&mut v, vec![Change::Upsert(24, 10, "node_modules".into(), true, NOW)], 160, &act);
         assert!(!v.idx.contains_key(&24));
@@ -1778,7 +2015,7 @@ mod tests {
             std::fs::write(root.join(f), b"x").unwrap();
         }
         let r = root.to_str().unwrap();
-        let w = walk_with(r, None, &rules(&["node_modules", "*.tmp"], &["private"]));
+        let w = walk_with(r, None, Index::new(), &rules(&["node_modules", "*.tmp"], &["private"]));
         let names: Vec<&str> = w.idx.iter_named().map(|(_, _, n)| n).collect();
         assert!(!names.contains(&"node_modules") && !names.contains(&"b.js") && !names.contains(&"d.tmp"));
         let hidden: Vec<&str> = w.idx.iter_named().filter(|(_, e, _)| e.hidden).map(|(_, _, n)| n).collect();
@@ -1790,13 +2027,77 @@ mod tests {
     #[test]
     fn index_retain_keeps_lookups_working() {
         let mut i = rule_tree();
-        i.retain(|f, e| {
-            e.size = 1;
+        i.retain(|_, f, hidden| {
+            *hidden = true;
             f % 2 == 0
         });
         assert_eq!(i.len(), 5);
-        assert!(i.get(&12).is_some_and(|e| e.size == 1) && i.get(&13).is_none());
+        assert!(i.get(&12).is_some_and(|e| e.hidden) && i.get(&13).is_none());
         assert_eq!(i.iter().count(), 5);
+        assert_eq!(std::mem::size_of::<Item>(), 28);
+    }
+
+    /// `changes` as `refresh` handles them: wait for the reports to arrive, then look at each path.
+    fn settle(vol: &RwLock<Volume>, changes: &Receiver<Option<String>>, act: &rules::Active) {
+        let mut paths = HashSet::new();
+        while let Ok(c) = changes.recv_timeout(Duration::from_millis(300)) {
+            paths.insert(c.expect("no overflow for a few files"));
+        }
+        assert!(!paths.is_empty(), "the watch reported nothing");
+        paths.iter().for_each(|p| refresh_path_with(vol, p, act));
+    }
+
+    #[test]
+    fn reported_changes_reach_the_index() {
+        let root = std::env::temp_dir().join("lisdir_watch");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/old.txt"), b"12345").unwrap();
+        let r = root.to_str().unwrap();
+        let act = rules(&["*.tmp"], &["private"]);
+        let v = walk_with(r, None, Index::new(), &act);
+        let vol = RwLock::new(Volume { root: r.into(), walk: true, idx: v.idx, journal_id: 0, next_usn: 0, dirty: false });
+        let changes = watch(r).unwrap();
+        let at = |rel| { let v = vol.read().unwrap(); find(&v.idx, rel).map(|f| v.idx.at(&f)) };
+        let sub_size = || at("sub").unwrap().size;
+        assert_eq!(sub_size(), 5);
+
+        // a new file, and a file the rules leave out
+        std::fs::write(root.join("sub/new.txt"), b"123").unwrap();
+        std::fs::write(root.join("sub/skip.tmp"), b"123").unwrap();
+        settle(&vol, &changes, &act);
+        assert_eq!(at("sub\\NEW.TXT").unwrap().size, 3); // names in any case, as Windows has them
+        assert!(at("sub\\skip.tmp").is_none());
+        assert_eq!(sub_size(), 8);
+
+        // a changed file; a new folder with what is already in it, in a hidden one
+        std::fs::write(root.join("sub/new.txt"), b"1234567").unwrap();
+        std::fs::create_dir_all(root.join("sub2/private/deep")).unwrap();
+        std::fs::write(root.join("sub2/private/deep/a.txt"), b"12").unwrap();
+        settle(&vol, &changes, &act);
+        assert_eq!(sub_size(), 12);
+        assert_eq!(at("sub2").unwrap().size, 2);
+        let a = at("sub2\\private\\deep\\a.txt").unwrap();
+        assert!(a.hidden && a.size == 2 && !at("sub2").unwrap().hidden);
+
+        // a renamed folder keeps what it holds; a removed one takes it along
+        std::fs::rename(root.join("sub2"), root.join("sub3")).unwrap();
+        std::fs::remove_file(root.join("sub/old.txt")).unwrap();
+        settle(&vol, &changes, &act);
+        assert!(at("sub2").is_none() && at("sub3\\private\\deep\\a.txt").is_some());
+        assert_eq!(sub_size(), 7);
+        std::fs::remove_dir_all(root.join("sub3")).unwrap();
+        settle(&vol, &changes, &act);
+        assert!(at("sub3").is_none() && at("sub3\\private\\deep\\a.txt").is_none());
+        assert_eq!(vol.read().unwrap().idx.len(), 2); // sub and new.txt
+        refresh_path_with(&vol, "sub\\new.txt", &act); // seeing the same path again changes nothing
+        assert_eq!((vol.read().unwrap().idx.len(), sub_size()), (2, 7));
+
+        // a walk gives the same totals as all of the above
+        let again = walk_with(r, None, vol.read().unwrap().idx.sized_like(), &act).idx;
+        assert_eq!(again.at(&find(&again, "sub").unwrap()).size, 7);
+        drop(changes);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -1838,7 +2139,7 @@ mod tests {
         v.idx.insert(13, Entry::new(10, "y.bin".into(), false, NOW).with_size(10));
         v.idx.insert(14, Entry::new(5, "c".into(), true, NOW));
         sum_folders(&mut v.idx);
-        let sizes = |v: &Volume| [10, 11, 14].map(|f| v.idx[&f].size);
+        let sizes = |v: &Volume| [10, 11, 14].map(|f| v.idx.at(&f).size);
         assert_eq!(sizes(&v), [110, 100, 0]);
 
         apply(&mut v, vec![Change::Meta(12, NOW, 300)], 1); // x.bin grows
@@ -1852,7 +2153,7 @@ mod tests {
         let live = sizes(&v);
         sum_folders(&mut v.idx);
         assert_eq!(sizes(&v), live, "the running totals equal a recount");
-        assert_eq!(v.idx[&5].size, 15);
+        assert_eq!(v.idx.at(&5).size, 15);
     }
 
     /// The one-time recount at load must stay small next to reading the cache (about a second for 1.6 million
@@ -1874,7 +2175,7 @@ mod tests {
         sum_folders(&mut idx);
         let took = t.elapsed();
         println!("sum_folders over {} entries: {:.0} ms", idx.len(), took.as_secs_f64() * 1000.0);
-        assert_eq!(idx[&1].size, 90_000); // the top of a 10-folder chain holds all 90 files
+        assert_eq!(idx.at(&1).size, 90_000); // the top of a 10-folder chain holds all 90 files
         assert!(took < Duration::from_millis(1500), "{took:?}");
     }
 
@@ -1886,13 +2187,13 @@ mod tests {
         std::fs::write(root.join("a").join("b").join("deep file.txt"), b"x").unwrap();
         std::fs::write(root.join("top.txt"), b"x").unwrap();
         let r = root.to_str().unwrap();
-        let w = walk(r, None);
+        let w = walk(r, None, Index::new());
         assert!(w.reliable());
         let idx = w.idx;
         assert_eq!(idx.len(), 4); // a, b, deep file.txt, top.txt
         let hit = search(&idx, &q("deepf"), 5)[0].1;
         assert_eq!(full_path(&idx, hit, r), format!("{r}\\a\\b\\deep file.txt"));
-        assert!(idx[&hit].time > NOW, "walked entries carry their modified time"); // written just now
+        assert!(idx.at(&hit).time > NOW, "walked entries carry their modified time"); // written just now
         let folder = |n: &str| idx.iter_named().find(|(_, _, name)| *name == n).unwrap().1.size;
         assert_eq!((folder("a"), folder("b")), (1, 1)); // folders add up the files below them
         std::fs::remove_dir_all(&root).unwrap();
@@ -1906,7 +2207,7 @@ mod tests {
         std::fs::write(root.join("a").join("one.txt"), b"x").unwrap();
         let r = root.to_str().unwrap();
         let vol = RwLock::new(Volume { root: r.into(), walk: true, idx: Index::new(), journal_id: 0, next_usn: 0, dirty: false });
-        let w = walk(r, Some(&vol));
+        let w = walk(r, Some(&vol), Index::new());
         assert!(w.reliable() && w.idx.is_empty());
         assert_eq!(vol.read().unwrap().idx.len(), 2); // a, one.txt
         assert_eq!(vol.read().unwrap().idx.iter().find(|(_, e)| e.is_dir).unwrap().1.size, 1);
@@ -1916,11 +2217,11 @@ mod tests {
     #[test]
     fn unreachable_walk_is_not_trusted() {
         // a share that is offline: the root itself cannot be read
-        let w = walk(r"\\lisdir-no-such-host-0\nothing", None);
+        let w = walk(r"\\lisdir-no-such-host-0\nothing", None, Index::new());
         assert!(w.idx.is_empty());
         assert!(!w.reliable());
         // a missing local folder behaves the same way
-        assert!(!walk(r"C:\lisdir-no-such-folder-0", None).reliable());
+        assert!(!walk(r"C:\lisdir-no-such-folder-0", None, Index::new()).reliable());
         // the 2% rule: a few vanished folders are fine, a mass failure is not
         let few = Walk { idx: Index::new(), dirs: 1000, failed: 10 };
         let many = Walk { idx: Index::new(), dirs: 1000, failed: 200 };
@@ -1963,7 +2264,7 @@ mod tests {
                 _ => assert_eq!(idx.name(&frn), model.get(&frn).map(|n| n.as_str()), "step {step}"),
             }
             if step == 40_000 {
-                idx.retain(|f, _| f % 7 != 0);
+                idx.retain(|_, f, _| f % 7 != 0);
                 model.retain(|f, _| f % 7 != 0);
             }
         }
@@ -2110,6 +2411,34 @@ mod tests {
         let back = load("Z:", false).unwrap();
         println!("load (LSD3) {} entries: {:.0} ms", back.idx.len(), ms(t.elapsed()));
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// What a start costs, phase by phase, on a copy of the real cache; LOCALAPPDATA must point at that copy:
+    /// cargo test --release bench_start -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench_start() {
+        let peak = || {
+            let c = format!("(Get-Process -Id {}).PeakWorkingSet64", std::process::id());
+            let out = std::process::Command::new("powershell").args(["-NoProfile", "-Command", &c]).output().unwrap().stdout;
+            String::from_utf8_lossy(&out).trim().parse::<f64>().unwrap_or(0.0) / 1e6
+        };
+        crate::rules::set(&[], &crate::settings::Settings::load().exclude);
+        let mut t = std::time::Instant::now();
+        let mut phase = |what: &str| {
+            println!("{what:<14} {:>6.0} ms, peak so far {:>4.0} MB", t.elapsed().as_secs_f64() * 1000.0, peak());
+            t = std::time::Instant::now();
+        };
+        for root in ["C:", "Y:"] {
+            let mut v = load(root, root == "Y:").expect("no cache at LOCALAPPDATA");
+            phase("load + log");
+            prune(&mut v.idx, root);
+            phase("prune");
+            sum_folders(&mut v.idx);
+            phase("sum_folders");
+            write_cache(&v).unwrap();
+            phase("save");
+        }
     }
 
     /// Manual benchmark on a few million names: cargo test --release bench_search -- --ignored --nocapture

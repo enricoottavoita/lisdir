@@ -10,6 +10,20 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.17.7] - 2026-11-01
+
+### Changed
+- Network folders: changes the server reports reach the results within seconds, instead of waiting for the next walk.
+  A share that has reported changes is walked once an hour as a safety net; one that has not stays at every 10 minutes.
+- The peak memory of the index service at start drops from about 400 MB to about 230 MB on a disk with 1.7 million
+  entries, because the cache is written to disk piece by piece. Each entry also takes 12 bytes less.
+- A start no longer rewrites the cache: what changed since the last run goes in the log, about 0.1 s saved.
+- Folder totals are recounted in the background, so a disk can be searched about 0.2 s sooner.
+- Disks load at the same time rather than one after the other, and the bar no longer waits for network caches to load.
+- A new walk of a share reserves the memory it needs, so its peak is lower: 199 MB instead of 227 MB for 1.2 million
+  entries.
+- With exclusion rules, applying them at start takes less memory.
+
 ## [0.17.6] - 2026-11-01
 
 ### Changed
@@ -300,7 +314,8 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.6...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.7...HEAD
+[0.17.7]: https://github.com/enricoottavoita/lisdir/compare/v0.17.6...v0.17.7
 [0.17.6]: https://github.com/enricoottavoita/lisdir/compare/v0.17.5...v0.17.6
 [0.17.5]: https://github.com/enricoottavoita/lisdir/compare/v0.17.3...v0.17.5
 [0.17.3]: https://github.com/enricoottavoita/lisdir/compare/v0.17.2...v0.17.3
