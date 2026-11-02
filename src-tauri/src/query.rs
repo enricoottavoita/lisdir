@@ -49,6 +49,17 @@ impl Clock {
         Clock { now, offset: -(bias as i64) * 60 }
     }
 
+    /// A unix time as local "2026-11-02 08:49"; empty when unknown (0).
+    pub fn stamp(&self, t: i64) -> String {
+        if t <= 0 {
+            return String::new();
+        }
+        let local = t + self.offset;
+        let (y, m, d) = civil_from_days(local.div_euclid(DAY));
+        let secs = local.rem_euclid(DAY);
+        format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", secs / 3600, secs % 3600 / 60)
+    }
+
     /// Unix time of the local midnight that starts today.
     fn today(&self) -> i64 {
         (self.now + self.offset).div_euclid(DAY) * DAY - self.offset
@@ -298,6 +309,13 @@ mod tests {
 
     fn p(s: &str) -> Query {
         Query::parse(s, &CLOCK)
+    }
+
+    #[test]
+    fn a_time_is_written_in_local_time() {
+        assert_eq!(CLOCK.stamp(1_700_000_000), "2023-11-14 23:13"); // the hour east of UTC is added
+        assert_eq!(Clock { now: 0, offset: 0 }.stamp(86_400 + 3_600 + 60), "1970-01-02 01:01");
+        assert_eq!(CLOCK.stamp(0), ""); // unknown
     }
 
     #[test]

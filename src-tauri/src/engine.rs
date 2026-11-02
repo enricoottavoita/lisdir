@@ -60,7 +60,7 @@ pub struct Entry {
 #[derive(Clone, Copy)]
 pub struct Rec {
     parent: u64,
-    time: i64,
+    pub time: i64,
     pub size: u64,
     pub is_dir: bool,
     pub hidden: bool,

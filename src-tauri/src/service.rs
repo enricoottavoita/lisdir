@@ -53,11 +53,13 @@ pub struct Hit {
     /// name of the other PC this result lives on; empty for this PC
     pub peer: String,
     pub score: f32,
+    /// last change, unix seconds; 0 when unknown (apps, the other PCs)
+    pub time: i64,
 }
 
 impl Hit {
     pub fn new(name: String, path: String, is_dir: bool, score: f32) -> Self {
-        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], size: 0, pinned: false, peer: String::new(), name, path, is_dir, score }
+        Hit { icon: crate::icons::key(&name, &path, is_dir), app: false, hl: vec![], size: 0, pinned: false, peer: String::new(), name, path, is_dir, score, time: 0 }
     }
 
     pub fn with_size(mut self, size: u64) -> Self {
@@ -65,8 +67,13 @@ impl Hit {
         self
     }
 
+    pub fn with_time(mut self, time: i64) -> Self {
+        self.time = time;
+        self
+    }
+
     pub fn app(name: &str, id: &str, score: f32) -> Self {
-        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, size: 0, pinned: false, peer: String::new(), score }
+        Hit { icon: format!("app:{id}"), app: true, hl: vec![], name: name.into(), path: format!(r"shell:AppsFolder\{id}"), is_dir: false, size: 0, pinned: false, peer: String::new(), score, time: 0 }
     }
 }
 
@@ -76,17 +83,18 @@ pub struct Reply {
     pub count: usize,
 }
 
-/// Best 20 matches across all volumes, highest score first.
-pub fn search_volumes(vols: &Volumes, q: &Query) -> Vec<Hit> {
+/// Best `limit` matches across all volumes, highest score first.
+pub fn search_volumes(vols: &Volumes, q: &Query, limit: usize) -> Vec<Hit> {
     let mut hits = vec![];
     for vol in vols.read().unwrap().iter() {
         let v = vol.read().unwrap();
-        hits.extend(engine::search(&v.idx, q, 20).into_iter().map(|(score, f)| {
-            Hit::new(v.idx.name(&f).unwrap_or_default().to_string(), engine::full_path(&v.idx, f, &v.root), v.idx.at(&f).is_dir, score).with_size(v.idx.at(&f).size)
+        hits.extend(engine::search(&v.idx, q, limit).into_iter().map(|(score, f)| {
+            let rec = v.idx.at(&f);
+            Hit::new(v.idx.name(&f).unwrap_or_default().to_string(), engine::full_path(&v.idx, f, &v.root), rec.is_dir, score).with_size(rec.size).with_time(rec.time)
         }));
     }
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
-    hits.truncate(20);
+    hits.truncate(limit);
     hits
 }
 
@@ -189,13 +197,23 @@ fn pipe_security() -> Option<SECURITY_ATTRIBUTES> {
     }
 }
 
-fn answer(q: &str, vols: &Volumes, busy: &AtomicUsize) -> String {
+fn answer(q: &str, limit: usize, vols: &Volumes, busy: &AtomicUsize) -> String {
     let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
     let mut out = String::new();
-    for h in search_volumes(vols, &Query::parse(q, &Clock::system())) {
-        out += &format!("H\t{}\t{}\t{}\t{}\t{}\n", h.score, h.is_dir as u8, clean(&h.name), clean(&h.path), h.size);
+    for h in search_volumes(vols, &Query::parse(q, &Clock::system()), limit) {
+        out += &format!("H\t{}\t{}\t{}\t{}\t{}\t{}\n", h.score, h.is_dir as u8, clean(&h.name), clean(&h.path), h.size, h.time);
     }
     out + &format!("E\t{}\t{}\n", (busy.load(SeqCst) > 0) as u8, count(vols))
+}
+
+/// How many results a request asks for, and its search text. Anything else is an empty search, which only reports status.
+fn request(line: &str) -> (usize, String) {
+    if let Some(rest) = line.strip_prefix("M\t") {
+        if let Some((n, q)) = rest.split_once('\t') {
+            return (n.parse().unwrap_or(20).clamp(1, 5000), q.to_string());
+        }
+    }
+    (20, line.strip_prefix("S\t").unwrap_or("").to_string())
 }
 
 fn handle(f: File, vols: Volumes, busy: Arc<AtomicUsize>) {
@@ -204,9 +222,10 @@ fn handle(f: File, vols: Volumes, busy: Arc<AtomicUsize>) {
         if line.trim_end() == "Q" {
             std::process::exit(0); // a portable update replaced our exe, see `stop_helper`
         }
-        let q = line.trim_end().strip_prefix("S\t").unwrap_or("").to_string();
+        // "S<tab>text": the best 20; "M<tab>n<tab>text": the best n (the search window asks for more)
+        let (limit, q) = request(line.trim_end());
         line.clear();
-        if w.write_all(answer(&q, &vols, &busy).as_bytes()).is_err() {
+        if w.write_all(answer(&q, limit, &vols, &busy).as_bytes()).is_err() {
             break;
         }
     }
@@ -252,10 +271,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_request_names_how_many_results_it_wants() {
+        assert_eq!(request("S	invoice"), (20, "invoice".to_string()));
+        assert_eq!(request("M	500	invoice ext:pdf"), (500, "invoice ext:pdf".to_string()));
+        assert_eq!(request("M	999999	x").0, 5000); // never more than the helper is willing to send
+        assert_eq!(request("M	many	x").0, 20);
+        assert_eq!(request(""), (20, String::new())); // a status probe
+        assert_eq!(request("M	5"), (20, String::new())); // no text: nothing to search
+    }
+
+    #[test]
     fn answers_filtered_queries_in_the_wire_format() {
         let vols: Volumes = Arc::new(RwLock::new(vec![Arc::new(RwLock::new(engine::sample_volume()))]));
         let busy = AtomicUsize::new(0);
-        let lines = |q: &str| answer(q, &vols, &busy).lines().map(String::from).collect::<Vec<_>>();
+        let lines = |q: &str| answer(q, 20, &vols, &busy).lines().map(String::from).collect::<Vec<_>>();
 
         // filters travel as plain text and are parsed on the helper's side
         let r = lines("report ext:pdf -draft");
@@ -263,7 +292,8 @@ mod tests {
         let f: Vec<&str> = r[0].split('\t').collect();
         assert_eq!((f[0], f[2], f[3], f[4]), ("H", "0", "report 2024.pdf", r"C:\Docs\report 2024.pdf"));
         assert!(f[1].parse::<f32>().is_ok());
-        assert_eq!(f[5], "2048"); // the size travels as the last field
+        assert_eq!(f[5], "2048"); // the size travels after the path
+        assert!(f[6].parse::<i64>().is_ok()); // and the last change as the last field
         assert_eq!(r[1], "E\t0\t3"); // not busy, three indexed items
 
         assert_eq!(lines(r"docs\ report").len(), 3); // both reports are in a folder containing "docs"
@@ -274,19 +304,35 @@ mod tests {
 
 // ---------------------------------------------------------------- client (UI, unelevated)
 
-/// Ask the helper. None when it is not running.
+/// Ask the helper for its best 20. None when it is not running.
 pub fn query(q: &str) -> Option<Reply> {
+    query_n(q, 20)
+}
+
+/// Ask the helper for its best `limit`. A helper older than this program does not know the request and answers
+/// with nothing, so an empty answer is asked again the old way (its best 20) before it is believed.
+pub fn query_n(q: &str, limit: usize) -> Option<Reply> {
+    let r = ask_n(q, limit)?;
+    if r.hits.is_empty() && limit != 20 && !q.trim().is_empty() {
+        return ask_n(q, 20);
+    }
+    Some(r)
+}
+
+fn ask_n(q: &str, limit: usize) -> Option<Reply> {
     let f = OpenOptions::new().read(true).write(true).open(PIPE).ok()?;
-    writeln!(&f, "S\t{}", q.replace(['\t', '\n', '\r'], " ")).ok()?;
+    let q = q.replace(['\t', '\n', '\r'], " ");
+    if limit == 20 { writeln!(&f, "S\t{q}") } else { writeln!(&f, "M\t{limit}\t{q}") }.ok()?;
     let mut hits = vec![];
     for line in BufReader::new(&f).lines() {
         let line = line.ok()?;
-        let mut p = line.splitn(6, '\t');
+        let mut p = line.splitn(7, '\t');
         match p.next()? {
             "H" => {
                 let (score, is_dir, name, path) = (p.next()?, p.next()?, p.next()?, p.next()?);
                 let size = p.next().and_then(|s| s.parse().ok()).unwrap_or(0); // absent from an older helper
-                hits.push(Hit::new(name.into(), path.into(), is_dir == "1", score.parse().ok()?).with_size(size));
+                let time = p.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                hits.push(Hit::new(name.into(), path.into(), is_dir == "1", score.parse().ok()?).with_size(size).with_time(time));
             }
             "E" => return Some(Reply { hits, busy: p.next()? == "1", count: p.next()?.parse().ok()? }),
             _ => return None,

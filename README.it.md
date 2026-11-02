@@ -47,6 +47,9 @@ Scritto in Rust, con interfaccia nativa Win32 e Direct2D. Licenza MIT.
 - **Impostazioni.** La scorciatoia che apre la barra, la lingua, il tema dei colori (Windows, Scuro, Chiaro, Notte,
   Carta), l'avvio con Windows e cosa viene indicizzato: quali dischi, altre cartelle (con il selettore di cartelle) e
   regole per ciò che va lasciato fuori dall'indice o nascosto dai risultati.
+- **Finestra di ricerca.** `Ctrl+W` nella barra (o il menu dell'icona) apre una finestra senza cornice che resta aperta: i migliori
+  1.000 risultati in colonne (nome, cartella, dimensione, modificato) che si ordinano cliccando un titolo. Esiste solo
+  finché è aperta.
 - **Altri PC.** Nelle impostazioni, sezione *Altri PC*: accendi l'opzione, salva e riavvia lisdir (su entrambi i PC). Poi abbinali: su un
 PC premi **Permetti un nuovo PC** (aperto per due minuti), sull'altro incolla il codice del primo e premi **Abbina**. Il
 due PC mostrano un codice di verifica di 4 caratteri; il primo mostra anche chi lo chiede, e confermi lì solo se il

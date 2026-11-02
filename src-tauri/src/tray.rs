@@ -95,12 +95,13 @@ pub fn start(s: &Settings) {
 }
 
 unsafe fn menu(h: HWND) {
-    let (open, type_search, autostart, settings, roots, update, install, exit) = (1, 2, 3, 4, 5, 6, 7, 8);
+    let (open, type_search, autostart, settings, roots, update, install, exit, window) = (1, 2, 3, 4, 5, 6, 7, 8, 9);
     let m = CreatePopupMenu();
     let add = |id: usize, text: &str, flags: u32| AppendMenuW(m, MF_STRING | flags, id, wide(text).as_ptr());
     let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
     add(0, &format!("lisdir {VERSION}"), MF_GRAYED);
     add(open, t("Open (Alt+Space)", "Apri (Alt+Spazio)"), 0);
+    add(window, t("Search window", "Finestra di ricerca"), 0);
     add(type_search, t("Type to search in Explorer/Desktop", "Digita per cercare in Esplora risorse/Desktop"), check(typesearch::ENABLED.load(SeqCst)));
     add(autostart, t("Start with Windows", "Avvia con Windows"), check(crate::autostart()));
     add(settings, t("Settings…", "Impostazioni…"), 0);
@@ -119,6 +120,7 @@ unsafe fn menu(h: HWND) {
     DestroyMenu(m);
     match picked {
         p if p == open => bar::toggle(),
+        p if p == window => crate::win::open(""),
         p if p == type_search => {
             let on = !typesearch::ENABLED.load(SeqCst);
             typesearch::ENABLED.store(on, SeqCst);

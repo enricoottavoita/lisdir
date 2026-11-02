@@ -10,6 +10,19 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-02
+
+### Added
+- A search window: a window without a frame, like the bar, that stays open for comparing results. It moves by its top
+  row, resizes from its edges (and snaps and maximises like any window) and has its own reduce and close buttons.
+  Open it from the tray menu (*Search window*) or with `Ctrl+W` in the bar, which carries the text you typed. It searches as you type, lists up to 1,000
+  results with their folder, size and modified time, and sorts them when you click a column title (a second click
+  reverses the order, a third goes back to the best match first). The arrows, `PageUp`/`PageDown`, `Enter`,
+  `Ctrl+Enter`, `Ctrl+C`/`Ctrl+X` and the other keys of the bar work in it, and a double click opens a result. It is
+  made when you open it and gone when you close it: nothing of it stays in memory.
+- The results carry the time of their last change, so the modified time can be shown and sorted. It comes with the
+  index service of this version; with an older one the column stays empty until the service is restarted.
+
 ## [0.17.8] - 2026-11-01
 
 0.17.7 was never published: its build stopped on a test that depended on timing.

@@ -16,6 +16,7 @@ mod tray;
 mod typesearch;
 mod update;
 mod usage;
+mod win;
 
 use query::{Clock, Query};
 use service::{Hit, Shared, Volumes};
@@ -183,11 +184,11 @@ fn recents(app: &App) -> Vec<Hit> {
 }
 
 /// The files this PC finds for a search text (also what the other PCs get when they ask).
-fn files(app: &App, q: &str, query: &Query) -> Vec<Hit> {
+fn files(app: &App, q: &str, query: &Query, limit: usize) -> Vec<Hit> {
     let mut hits = vec![];
     if query.searches_files() {
-        hits = service::search_volumes(&app.network, query);
-        hits.extend(service::query(q).map(|r| r.hits).unwrap_or_default());
+        hits = service::search_volumes(&app.network, query, limit);
+        hits.extend(service::query_n(q, limit).map(|r| r.hits).unwrap_or_default());
         // apps are ranked together with files; their Start menu shortcuts would only duplicate them
         hits.retain(|h| !(h.path.contains(r"\Start Menu\Programs\") && h.path.to_lowercase().ends_with(".lnk")));
     }
@@ -200,7 +201,7 @@ fn shared_files(app: &App, q: &str) -> Vec<Hit> {
     if query.is_empty() {
         return vec![];
     }
-    let mut hits = files(app, q, &query);
+    let mut hits = files(app, q, &query, 20);
     hits.sort_by(|a, b| b.score.total_cmp(&a.score));
     hits.truncate(20);
     hits
@@ -218,12 +219,17 @@ async fn remote_search(q: String) -> Vec<Hit> {
 }
 
 fn search(q: &str) -> Vec<Hit> {
+    search_n(q, 20)
+}
+
+/// The best `limit` results: the bar asks for 20, the search window for many more to sort.
+fn search_n(q: &str, limit: usize) -> Vec<Hit> {
     let app = app();
     let query = Query::parse(q, &Clock::system());
     if query.is_empty() {
         return recents(app);
     }
-    let mut hits = files(app, q, &query);
+    let mut hits = files(app, q, &query, limit);
     if query.wants_apps() {
         // an app found by name sits with the folders, ahead of the files
         let tier = if query.terms.is_empty() { 0.0 } else { engine::FIRST };
@@ -238,7 +244,7 @@ fn search(q: &str) -> Vec<Hit> {
     hits.iter_mut().for_each(|h| h.pinned = pins.has(&h.path));
     // pinned results first, each group by score
     hits.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.score.total_cmp(&a.score)));
-    hits.truncate(20);
+    hits.truncate(limit);
     hits.iter_mut().for_each(|h| h.hl = engine::highlight(&query, &h.name));
     hits
 }
@@ -471,7 +477,7 @@ fn main() {
     unsafe {
         let mut m = std::mem::zeroed();
         while GetMessageW(&mut m, std::ptr::null_mut(), 0, 0) > 0 {
-            if !bar::key(&m) && !prefs::key(&m) {
+            if !bar::key(&m) && !prefs::key(&m) && !win::key(&m) {
                 TranslateMessage(&m);
                 DispatchMessageW(&m);
             }

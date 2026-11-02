@@ -44,6 +44,8 @@ Written in Rust, with a native Win32 and Direct2D interface. MIT licensed.
   properties (`Alt+Enter`). The shortcuts also work with the menu closed.
 - **Preview and pins.** `Alt+P` shows a preview pane: the start of a text file, or a thumbnail. `Ctrl+P` pins a
   result so it is always listed first.
+- **Search window.** `Ctrl+W` in the bar (or the tray menu) opens a frameless window that stays open: the best 1,000 results
+  in columns (name, folder, size, modified) that sort when you click a title. It exists only while it is open.
 - **Other PCs.** Optional and off by default: pair two PCs that run lisdir (home and office, say) and each one also
   lists files found on the other, marked with its name. They cannot be opened from afar, only their path copied.
   Encrypted, direct when the networks allow it; no account. See below.

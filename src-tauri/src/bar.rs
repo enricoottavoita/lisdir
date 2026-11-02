@@ -127,7 +127,7 @@ pub fn request_show() {
 }
 
 /// 1536 -> "1.5 KB". Binary units, like Explorer.
-fn fmt_size(n: u64) -> String {
+pub fn fmt_size(n: u64) -> String {
     let (mut v, mut i) = (n as f64, 0);
     while v >= 1024.0 && i < 4 {
         v /= 1024.0;
@@ -138,7 +138,7 @@ fn fmt_size(n: u64) -> String {
 }
 
 /// 1234567 -> "1,234,567" or "1.234.567".
-fn fmt_count(n: usize, sep: char) -> String {
+pub fn fmt_count(n: usize, sep: char) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -151,7 +151,7 @@ fn fmt_count(n: usize, sep: char) -> String {
 }
 
 /// Char positions (as in `Hit::hl`) to runs of UTF-16 units.
-fn marks(name: &str, hl: &[usize]) -> Vec<(u32, u32)> {
+pub fn marks(name: &str, hl: &[usize]) -> Vec<(u32, u32)> {
     let (mut out, mut at): (Vec<(u32, u32)>, u32) = (vec![], 0);
     for (i, c) in name.chars().enumerate() {
         let n = c.len_utf16() as u32;
@@ -167,7 +167,7 @@ fn marks(name: &str, hl: &[usize]) -> Vec<(u32, u32)> {
 }
 
 /// Where the word before `at` starts, for Ctrl+Backspace (the text box has no such key of its own).
-fn word_start(text: &[u16], at: usize) -> usize {
+pub fn word_start(text: &[u16], at: usize) -> usize {
     let space = |i: usize| char::from_u32(text[i] as u32).is_some_and(char::is_whitespace);
     let mut i = at;
     while i > 0 && space(i - 1) {
@@ -356,6 +356,7 @@ pub fn refresh() {
         SendMessageW(s.edit, 0x1501 /* EM_SETCUEBANNER */, 1, wide(t("Search files, folders and apps…", "Cerca file, cartelle e app…")).as_ptr() as isize);
         repaint(s);
     }
+    crate::win::refresh();
 }
 
 unsafe fn set_pane(s: &mut Bar, on: bool) {
@@ -432,7 +433,7 @@ unsafe fn act(s: &mut Bar, a: &str) {
 }
 
 /// The action a key combination stands for, if any. With text selected in the box, Ctrl+C / Ctrl+X edit the text.
-fn key_act(vk: u16, ctrl: bool, alt: bool, shift: bool, selected: bool) -> Option<&'static str> {
+pub fn key_act(vk: u16, ctrl: bool, alt: bool, shift: bool, selected: bool) -> Option<&'static str> {
     if vk == VK_RETURN {
         return Some(if alt { "properties" } else if ctrl { "folder" } else { "open" });
     }
@@ -480,6 +481,11 @@ pub unsafe fn key(m: &MSG) -> bool {
         }
         (_, 0x50 /* P */) if alt => {
             set_pane(s, !s.pv_on);
+            return true;
+        }
+        (_, 0x57 /* W */) if ctrl => {
+            crate::win::open(&query(s));
+            hide(s);
             return true;
         }
         (_, 0xBC /* comma */) if ctrl => {
@@ -570,7 +576,7 @@ unsafe fn paint(s: &mut Bar) {
     let hint = if hist {
         t("Recent · ↑↓ select · Enter open · Del remove · Shift+Del clear all · Esc close", "Recenti · ↑↓ seleziona · Invio apri · Canc rimuovi · Maiusc+Canc svuota tutto · Esc chiudi")
     } else {
-        t("↑↓ select · Enter open · → or Ctrl+O actions · Alt+P preview · Esc close", "↑↓ seleziona · Invio apri · → o Ctrl+O azioni · Alt+P anteprima · Esc chiudi")
+        t("↑↓ select · Enter open · → or Ctrl+O actions · Alt+P preview · Ctrl+W window · Esc close", "↑↓ seleziona · Invio apri · → o Ctrl+O azioni · Alt+P anteprima · Ctrl+W finestra · Esc chiudi")
     };
     c.text(&format!("{} · {hint}", s.status), 12.0, false, (18.0, HEIGHT - 25.0, w - 36.0 - ver - 12.0, 16.0), theme.dim);
 

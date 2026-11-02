@@ -47,8 +47,8 @@ unelevated, and every feature ships with a test or a measured check.
       unplugged (0.16)
 
 ## 0.18 — search window
-- [ ] Persistent search window that stays open to compare files
-- [ ] Sortable columns including size and date modified
+- [x] Persistent search window that stays open to compare files (first version: `Ctrl+W`, tray menu)
+- [x] Sortable columns including size and date modified (the best 1,000 results)
 - [ ] Multi-select: copy, cut, delete, copy paths, drag several files at once
 - [ ] Filter presets (Documents, Pictures, Last 7 days) that show their result counts before you apply them;
       Ctrl+click combines several
