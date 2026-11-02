@@ -10,8 +10,11 @@ Scritto in Rust, con interfaccia nativa Win32 e Direct2D. Licenza MIT.
 ## Funzioni
 
 - **Ricerca istantanea su milioni di file.** I dischi NTFS locali sono indicizzati leggendo direttamente la MFT,
-  senza scorrere le cartelle, molto più veloce di una scansione delle cartelle. Misurato su 1,6 milioni di voci
-  (due dischi): una ricerca di testo richiede circa 10–20 ms; i filtri come `date:` e `size:` circa 5 ms. L'indice di quelle voci occupa circa 155 MB di memoria (93 byte a voce) e si carica in circa mezzo secondo.
+  senza scorrere le cartelle, molto più veloce di una scansione delle cartelle. Misurato su 1,5 milioni di voci
+  (due dischi): una ricerca di testo richiede circa 8–16 ms (una sola lettera circa 27 ms); i filtri come `date:` e
+  `size:` circa 4 ms. Dalla pressione del tasto alla lista disegnata passano circa 11 ms. L'indice di quelle voci occupa
+  circa 155 MB di memoria (93 byte a voce) e si carica in circa 0,4 s. Installato (0.17.8, pochi minuti dopo l'avvio):
+  l'helper usa 126 MB e la finestra 110 MB (compresi due dischi che scansiona da sé), e non c'è più il web view.
 - **Sempre aggiornato.** L'indice segue il journal USN di NTFS (controllato ogni secondo): file creati, rinominati,
   spostati o eliminati compaiono entro un paio di secondi, e così le modifiche (data e dimensione si aggiornano alla
   chiusura del file). L'indice è salvato su disco, quindi a ogni riavvio recupera solo ciò che è cambiato; nel frattempo

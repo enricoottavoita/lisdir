@@ -54,8 +54,9 @@ unelevated, and every feature ships with a test or a measured check.
       unsupported file system, helper not running, network folder not yet walked, and how to fix it
 - [ ] About page: item counts, per-volume status, last walk times, and a small built-in speed test
 - [ ] Tell the user when settings cannot be saved (the settings window shows the error; other places do not yet)
-- [ ] State the memory of the running helper and UI in the README once measured on an installed copy (0.17.6: helper
-      171 MB private, UI 131 MB with three network disks; the entries are 12 bytes smaller since then)
+- [x] State the memory of the running helper and UI in the README (0.17.8, a few minutes after the start: helper
+      126 MB private, UI 110 MB, counting two disks it scans itself)
+- [ ] Measure the helper and the window again after hours of use, to see that the memory stays flat
 
 ## Other PCs — next
 - [ ] Limit how often a paired PC may ask, and the connections waiting at once

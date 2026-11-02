@@ -10,8 +10,11 @@ Written in Rust, with a native Win32 and Direct2D interface. MIT licensed.
 ## Features
 
 - **Instant search over millions of files.** Local NTFS volumes are indexed by reading the MFT directly,
-  not by walking directories, which is far faster than scanning folders. Measured on 1.6 million entries
-  (two disks): a text search takes about 10–20 ms; filters such as `date:` and `size:` about 5 ms. The index of those entries takes about 155 MB of memory (93 bytes an entry) and loads in about half a second.
+  not by walking directories, which is far faster than scanning folders. Measured on 1.5 million entries
+  (two disks): a text search takes about 8–16 ms (a single letter about 27 ms); filters such as `date:` and `size:`
+  about 4 ms. From a key press to the list drawn takes about 11 ms. The index of those entries takes about 155 MB of
+  memory (93 bytes an entry) and loads in about 0.4 s. Installed (0.17.8, a few minutes after the start): the helper
+  uses 126 MB and the window 110 MB (which includes two disks it scans itself), and there is no web view.
 - **Always current.** The index follows the NTFS USN journal (checked every second): files you create, rename,
   move or delete show up within a couple of seconds, and so do edits (the modified time and size are refreshed when
   a file is closed). The index is cached on disk, so a restart only has to catch up on what changed; between
