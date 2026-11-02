@@ -24,6 +24,11 @@ unelevated, and every feature ships with a test or a measured check.
 - [x] Pairing with a 4-character verification code; `peer.key` sealed with DPAPI (0.17.2)
 - [x] Search: letter masks apart from the entries, one block for the lowercased names, other PCs asked in parallel (0.17.2)
 - [x] Native Win32 and Direct2D windows for the bar and the settings; Tauri and WebView2 removed (0.17.5)
+- [x] A name search lists folders and apps before files; the index takes about half the memory (93 bytes an entry) and
+      loads twice as fast (0.17.3)
+- [x] A folder opened from the results replaces the visible tab of the Explorer window in front (0.17.6)
+- [x] Network folders: the changes a server reports reach the results within seconds; lower peak memory at start,
+      disks load at the same time (0.17.8)
 - [x] The recent list is titled and drawn in grey, so it reads as history, not as results (0.16.4)
 - [x] `size:` filter and exact modified times from the NTFS file records (0.14)
 - [x] Search on several cores; the cache is saved without pausing searches (0.14.1)
