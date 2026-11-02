@@ -223,8 +223,22 @@ does all of this in CI and publishes a GitHub release.
 - The action menu works on one result at a time (several at once comes with the search window).
 - If a folder is renamed to a name a hide rule matches, the files already inside it are hidden only after the next
   restart. Path rules name folders, not single files.
-- Not yet implemented: Open/Save dialog integration, content search.
-  The plan is in [TODO.md](TODO.md).
+- Scroll bars stay light in the dark themes, because Windows offers no supported way to darken them. The scroll
+  indicator of the result list cannot be dragged; the wheel and the keyboard scroll the list.
+- Not implemented: searching inside files.
+
+### Roadmap
+
+The full list, in priority order, is in [TODO.md](TODO.md). In short:
+
+- **0.18, a search window:** a window that stays open to compare files, sortable columns (size, date), selecting
+  several results at once (copy, cut, delete, drag), filter presets, and a double-tap of `Ctrl` to switch between the
+  bar and the window.
+- **0.19, diagnostics:** "Why can't I find this?" (explains why a file is not in the results and how to fix it) and an
+  About page with item counts and the state of each disk.
+- **Other PCs:** limits on how often a paired PC may ask, sharing only some folders, a shorter pairing code with a
+  password-based key exchange, and the last results of a PC that is off.
+- **Later:** Open/Save dialog integration, cloud-synced folders, web-search keywords, commands and a small calculator.
 
 ## Contributing
 

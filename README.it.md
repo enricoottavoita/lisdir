@@ -178,6 +178,8 @@ cargo build --release
   condivisione molto grande); dagli avvii successivi usa la cache.
 - Dimensioni e date dei dischi locali vengono dai record NTFS. Un file i cui dati stanno in un record di estensione
   (molto frammentato o con molti attributi) risulta di dimensione 0 e la dimensione non viene mostrata.
+- L'attività pianificata punta al percorso attuale dell'exe: spostarlo o ricompilarlo mentre l'helper è in esecuzione
+  richiede di fermare prima l'helper (l'installer lo gestisce negli aggiornamenti).
 - "Digita per cercare" non controlla se c'è qualcosa di selezionato e non funziona sopra finestre elevate.
 - I diritti di amministratore servono una volta, per configurare l'helper elevato; poi la barra non li richiede.
 - La prima scansione di un disco locale legge un record per file per raccogliere dimensioni e date: circa 11 secondi in
@@ -187,7 +189,23 @@ cargo build --release
 - Il menu azioni agisce su un risultato alla volta (più file insieme arriveranno con la finestra di ricerca).
 - Le regole di nascondimento valgono per ciò che è indicizzato; le regole con un percorso indicano cartelle, non singoli
   file.
-- Non ancora presenti: integrazione con i dialoghi Apri/Salva, ricerca nel contenuto. Il piano è in [TODO.md](TODO.md).
+- Le barre di scorrimento restano chiare nei temi scuri, perché Windows non offre un modo supportato per scurirle.
+  L'indicatore di scorrimento dell'elenco dei risultati non si può trascinare; lo scorrono la rotellina e la tastiera.
+- Non presente: la ricerca dentro i file.
+
+### Piano di lavoro
+
+L'elenco completo, in ordine di priorità, è in [TODO.md](TODO.md). In breve:
+
+- **0.18, una finestra di ricerca:** una finestra che resta aperta per confrontare i file, colonne ordinabili
+  (dimensione, data), selezione di più risultati insieme (copia, taglia, elimina, trascina), filtri predefiniti e un
+  doppio tocco di `Ctrl` per passare tra la barra e la finestra.
+- **0.19, diagnostica:** «Perché non lo trovo?» (spiega perché un file non è nei risultati e come rimediare) e una
+  pagina Informazioni con il numero di voci e lo stato di ogni disco.
+- **Altri PC:** limiti a quanto spesso un PC abbinato può chiedere, condividere solo alcune cartelle, un codice di
+  abbinamento più breve con scambio di chiavi basato su password e gli ultimi risultati di un PC spento.
+- **Più avanti:** integrazione con i dialoghi Apri/Salva, cartelle sincronizzate con il cloud, parole chiave per la
+  ricerca sul web, comandi e una piccola calcolatrice.
 
 ## Licenza
 
