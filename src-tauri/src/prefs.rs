@@ -64,9 +64,44 @@ const RESTART: i32 = 38;
 const CLOSE: i32 = 39;
 const SAVE: i32 = 40;
 const BADGE: i32 = 41;
+/// the key text of each line of the shortcut list
+const SHORTCUT: i32 = 400;
 /// the check box of each disk; its label, like every check box's, is the id + LABEL
 const DRIVE: i32 = 200;
 const LABEL: i32 = 100;
+
+/// Every shortcut, by group: (group in English and Italian, [(keys in English and Italian, what it does in English and
+/// Italian)]). `{hotkey}` is the shortcut of the settings. The window and the bar are told apart: most keys are shared.
+const SHORTCUTS: [(&str, &str, &[(&str, &str, &str, &str)]); 3] = [
+    ("Anywhere", "Ovunque", &[
+        ("{hotkey}", "{hotkey}", "Open the search bar (set at the top of this page)", "Apri la barra di ricerca (impostata in alto in questa pagina)"),
+        ("a letter", "una lettera", "In Explorer or on the desktop, with Type to search on: open the bar with that letter", "In Esplora risorse o sul desktop, con Digita per cercare attivo: apre la barra con quella lettera"),
+    ]),
+    ("In the search bar", "Nella barra di ricerca", &[
+        ("↑  ↓", "↑  ↓", "Select a result", "Seleziona un risultato"),
+        ("Enter", "Invio", "Open it", "Aprilo"),
+        ("Ctrl+Enter", "Ctrl+Invio", "Show it in its folder", "Mostralo nella sua cartella"),
+        ("Alt+Enter", "Alt+Invio", "Properties", "Proprietà"),
+        ("→  or  Ctrl+O", "→  o  Ctrl+O", "Menu of actions", "Menu delle azioni"),
+        ("Ctrl+C  /  Ctrl+X", "Ctrl+C  /  Ctrl+X", "Copy / cut the file, to paste it in Explorer", "Copia / taglia il file, per incollarlo in Esplora risorse"),
+        ("Ctrl+Shift+C", "Ctrl+Maiusc+C", "Copy its path", "Copia il suo percorso"),
+        ("Ctrl+T", "Ctrl+T", "Open a terminal there", "Apri un terminale lì"),
+        ("Ctrl+P", "Ctrl+P", "Pin it to the top, or unpin it", "Fissalo in cima, o toglilo"),
+        ("Alt+P", "Alt+P", "Show or hide the preview pane", "Mostra o nascondi l'anteprima"),
+        ("Ctrl+W", "Ctrl+W", "Open the search window with this text", "Apri la finestra di ricerca con questo testo"),
+        ("Ctrl+,", "Ctrl+,", "Settings", "Impostazioni"),
+        ("Del  /  Shift+Del", "Canc  /  Maiusc+Canc", "With nothing typed: forget a recent item / all of them", "Senza testo: dimentica un elemento recente / tutti"),
+        ("Ctrl+Backspace", "Ctrl+Backspace", "Delete a word", "Cancella una parola"),
+        ("Esc", "Esc", "Close", "Chiudi"),
+    ]),
+    ("In the search window", "Nella finestra di ricerca", &[
+        ("↑  ↓  PgUp  PgDn", "↑  ↓  PagSu  PagGiù", "Select a result", "Seleziona un risultato"),
+        ("Enter  or  double click", "Invio  o  doppio clic", "Open it", "Aprilo"),
+        ("As in the bar", "Come nella barra", "Ctrl+Enter, Alt+Enter, Ctrl+C, Ctrl+X, Ctrl+Shift+C and Ctrl+T work here too", "Ctrl+Invio, Alt+Invio, Ctrl+C, Ctrl+X, Ctrl+Maiusc+C e Ctrl+T valgono anche qui"),
+        ("Click on a title", "Clic su un titolo", "Sort by that column; again: the other way; again: best match first", "Ordina per quella colonna; di nuovo: al contrario; ancora: migliore prima"),
+        ("Esc", "Esc", "Close", "Chiudi"),
+    ]),
+];
 
 const WM_PAIRED: u32 = WM_APP + 1;
 const TIMER: usize = 1;
@@ -884,6 +919,22 @@ unsafe fn build(c: &Settings, saved: Settings, autostart: bool, at: Option<(i32,
         let h = (!hint_en.is_empty()).then(|| hint(t_owned(hint_en, hint_it), &mut dim));
         check(id, on);
         lines.push(Line::Row(l, h, vec![(id, 20, 20)]));
+    }
+
+    lines.push(Line::Gap(22));
+    lines.push(Line::Plain(heading(t("Keyboard shortcuts", "Scorciatoie da tastiera"), &mut dim)));
+    let mut n = 0;
+    for (group_en, group_it, keys) in SHORTCUTS {
+        lines.push(Line::Gap(8));
+        lines.push(Line::Plain(label(t_owned(group_en, group_it), 0)));
+        for (key_en, key_it, en, it) in keys {
+            let id = SHORTCUT + n;
+            n += 1;
+            let shown = t_owned(key_en, key_it).replace("{hotkey}", &c.hotkey);
+            let l = hint(t_owned(en, it), &mut dim);
+            child(&st, &shown, visible | SS_NOPREFIX | 2 /* SS_RIGHT */, 0, id, MONO);
+            lines.push(Line::Row(l, None, vec![(id, 190, 20)]));
+        }
     }
 
     lines.push(Line::Gap(22));

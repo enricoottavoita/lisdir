@@ -306,7 +306,7 @@ unsafe fn place(s: &mut Bar) {
 
 /// Bring the window forward. Windows refuses when the keyboard went to another program last (the Explorer hook): tapping
 /// Alt first counts as input of ours and lifts the refusal.
-unsafe fn foreground(h: HWND) {
+pub unsafe fn foreground(h: HWND) {
     if SetForegroundWindow(h) != 0 && GetForegroundWindow() == h {
         return;
     }

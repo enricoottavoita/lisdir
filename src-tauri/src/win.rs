@@ -452,6 +452,18 @@ pub fn refresh() {
 // ---------------------------------------------------------------- the window
 
 unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if msg == WM_NCCALCSIZE {
+        // no frame: the window is all client. This comes first of all, also while the window is being made: Windows asks
+        // once at the start and, if the size does not change later, never again. Maximised, Windows puts the frame
+        // outside the screen: take it back.
+        if w != 0 && IsZoomed(h) != 0 {
+            let p = &mut *(l as *mut NCCALCSIZE_PARAMS);
+            let pad = GetSystemMetrics(SM_CXPADDEDBORDER);
+            let (fx, fy) = (GetSystemMetrics(SM_CXSIZEFRAME) + pad, GetSystemMetrics(SM_CYSIZEFRAME) + pad);
+            p.rgrc[0] = RECT { left: p.rgrc[0].left + fx, top: p.rgrc[0].top + fy, right: p.rgrc[0].right - fx, bottom: p.rgrc[0].bottom - fy };
+        }
+        return 0;
+    }
     let Some(s) = cur() else { return DefWindowProcW(h, msg, w, l) };
     if s.hwnd.is_null() {
         return DefWindowProcW(h, msg, w, l); // still being made
@@ -494,16 +506,6 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             SetTextColor(w as _, gfx::colorref(s.theme.fg));
             SetBkColor(w as _, gfx::colorref(s.theme.bg));
             return s.brush as LRESULT;
-        }
-        WM_NCCALCSIZE => {
-            // no frame: the window is all client. Maximised, Windows puts the frame outside the screen: take it back
-            if w != 0 && IsZoomed(h) != 0 {
-                let p = &mut *(l as *mut NCCALCSIZE_PARAMS);
-                let pad = GetSystemMetrics(SM_CXPADDEDBORDER);
-                let (fx, fy) = (GetSystemMetrics(SM_CXSIZEFRAME) + pad, GetSystemMetrics(SM_CYSIZEFRAME) + pad);
-                p.rgrc[0] = RECT { left: p.rgrc[0].left + fx, top: p.rgrc[0].top + fy, right: p.rgrc[0].right - fx, bottom: p.rgrc[0].bottom - fy };
-            }
-            return 0;
         }
         WM_NCHITTEST => {
             let mut p = POINT { x: (l & 0xffff) as i16 as i32, y: (l >> 16 & 0xffff) as i16 as i32 };
@@ -640,7 +642,7 @@ pub fn open(query: &str) {
             if !query.is_empty() {
                 gfx::set_text(s.edit, query);
             }
-            SetForegroundWindow(s.hwnd);
+            bar::foreground(s.hwnd); // Windows refuses a plain SetForegroundWindow when another program had the keyboard
             SetFocus(s.edit);
             return;
         }
@@ -672,6 +674,7 @@ pub fn open(query: &str) {
             return;
         }
         s.hwnd = hwnd;
+        SetWindowPos(hwnd, null_mut(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED); // the frame is asked again
         s.scale = GetDpiForWindow(hwnd) as f32 / 96.0;
         s.edit = CreateWindowExW(0, wide("EDIT").as_ptr(), null(), WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL as u32, 0, 0, 0, 0, hwnd, null_mut(), module, null());
         s.canvas = Canvas::new(hwnd);
@@ -701,7 +704,7 @@ pub fn open(query: &str) {
         resize(s);
         gfx::set_text(s.edit, query);
         ShowWindow(hwnd, SW_SHOW);
-        SetForegroundWindow(hwnd);
+        bar::foreground(hwnd);
         SetFocus(s.edit);
         if query.is_empty() {
             repaint(s);

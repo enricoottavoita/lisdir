@@ -38,7 +38,8 @@ Scritto in Rust, con interfaccia nativa Win32 e Direct2D. Licenza MIT.
 - **Icone dei file e dimensioni.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto,
   documenti e archivi si distinguono subito, e a destra la dimensione: per una cartella, il totale dei file che
   contiene, aggiornato quando cambiano.
-- **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude, `Ctrl+,` apre le impostazioni.
+- **Tutto da tastiera.** `Invio` apre, `Ctrl+Invio` mostra nella cartella, `Esc` chiude, `Ctrl+,` apre le impostazioni,
+  che elencano anche tutte le scorciatoie.
 - **Azioni su un risultato.** `→`, `Ctrl+O` o il clic destro aprono un menu: copia o taglia il file (`Ctrl+C` /
   `Ctrl+X`, poi incollalo in Esplora risorse), copia il percorso (`Ctrl+Maiusc+C`), apri con, apri un terminale lì
   (`Ctrl+T`), proprietà (`Alt+Invio`). Le scorciatoie funzionano anche a menu chiuso.

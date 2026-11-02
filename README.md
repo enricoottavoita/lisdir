@@ -38,7 +38,8 @@ Written in Rust, with a native Win32 and Direct2D interface. MIT licensed.
   list is refreshed when the bar opens, so new installs show up without a restart.
 - **File-type icons and sizes.** Results show the same icons as Explorer, and the size at the right: for a folder, the
   total of the files inside it, kept current as they change.
-- **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes, `Ctrl+,` opens the settings.
+- **Keyboard driven.** `Enter` opens, `Ctrl+Enter` reveals in Explorer, `Esc` closes, `Ctrl+,` opens the settings,
+  which also list every shortcut.
 - **Actions on a result.** `→`, `Ctrl+O` or a right click opens a menu: copy or cut the file (`Ctrl+C` / `Ctrl+X`,
   then paste it in Explorer), copy its path (`Ctrl+Shift+C`), open with, open a terminal there (`Ctrl+T`),
   properties (`Alt+Enter`). The shortcuts also work with the menu closed.

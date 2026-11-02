@@ -10,6 +10,18 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-02
+
+### Added
+- The settings list every keyboard shortcut, grouped: anywhere, in the search bar and in the search window.
+
+### Fixed
+- Opening the search window while it was already open, or minimised, could leave it behind other windows when Windows
+  refused to bring it forward; it now uses the same way as the bar to get to the front.
+- The search window had a light band of about 7 pixels all around it, the resizing edge of Windows, because the frame
+  was taken away only after the first resize and the window was already the right size. It is now taken away from the
+  start, so the window is as frameless as the bar.
+
 ## [0.18.0] - 2026-11-02
 
 ### Added
