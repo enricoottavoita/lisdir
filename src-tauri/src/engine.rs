@@ -1614,13 +1614,23 @@ fn matches(q: &Query, idx: &Index, i: usize) -> Option<f32> {
         (false, false) | (true, true) => 0.0,
         (true, false) => 1.0,
     };
-    Some(base + tier)
+    // a name that is exactly what was typed comes first of all: the folders, then the files (a file also counts
+    // without its extension), then everything else
+    let exact = match q.terms.as_slice() {
+        [t] if eq_fold(name, t, ascii) => true,
+        [t] if !e.is_dir => name.rfind('.').is_some_and(|i| i > 0 && eq_fold(&name[..i], t, ascii)),
+        _ => false,
+    };
+    Some(base + tier + if exact { EXACT } else { 0.0 })
 }
 
 /// Added to the score of a folder (and of an app) found by name, so that they come before the files. Far more than any
 /// name match is worth (a whole word typed in order scores about 200), and small enough for `f32` to keep the order
 /// among the folders themselves.
 pub const FIRST: f32 = 1000.0;
+
+/// Added on top when the name is exactly the typed word: more than `FIRST` and any name match together.
+pub const EXACT: f32 = 10_000.0;
 
 /// Below this many entries a search runs on one thread (starting threads would cost more than it saves).
 const PARALLEL_FROM: usize = 50_000;
@@ -2292,8 +2302,23 @@ mod tests {
         i.insert(2, Entry::new(0, "my old reports archive".into(), true, NOW));
         i.insert(3, Entry::new(1, "report.pdf".into(), false, NOW));
         let ids = |text: &str| search(&i, &q(text), 10).iter().map(|h| h.1).collect::<Vec<_>>();
-        assert_eq!(ids("report"), [1, 2, 3]);
+        assert_eq!(ids("report"), [1, 3, 2], "the exact folder, the exact file, then the other folder");
+        assert_eq!(ids("reports"), [2], "a partial match still lists the folder before any file");
         assert_eq!(ids("date:month")[0], 3, "no name to rank by: the file keeps its small lead");
+    }
+
+    /// The name that is exactly what was typed comes first: folders, then files (the extension does not count), then the rest.
+    #[test]
+    fn exact_names_come_first_folders_before_files() {
+        let mut i = Index::new();
+        i.insert(1, Entry::new(0, "my report folder".into(), true, NOW));
+        i.insert(2, Entry::new(0, "report.pdf".into(), false, NOW));
+        i.insert(3, Entry::new(0, "Report".into(), true, NOW));
+        i.insert(4, Entry::new(0, "report".into(), false, NOW));
+        i.insert(5, Entry::new(0, "reports.txt".into(), false, NOW));
+        let ids = search(&i, &q("report"), 10).iter().map(|h| h.1).collect::<Vec<_>>();
+        assert_eq!(&ids[..3], [3, 4, 2].as_slice(), "exact folder, then the exact files");
+        assert_eq!(&ids[3..], [1, 5].as_slice(), "then the other folders before the other files");
     }
 
     /// An index sized at load grows by small steps: doubling its vectors for a few new files would hold as much memory

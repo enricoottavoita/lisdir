@@ -10,6 +10,13 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-11-03
+
+### Changed
+- A search for one word now lists the folders (and apps) named exactly that first, then the files named exactly that
+  (the extension does not count: `report` finds `report.pdf`), and only then everything else, folders before files as
+  before.
+
 ## [0.18.1] - 2026-11-02
 
 ### Added

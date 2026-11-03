@@ -32,8 +32,9 @@ Scritto in Rust, con interfaccia nativa Win32 e Direct2D. Licenza MIT.
   titolo grigio «Aperti di recente» perché si legga come cronologia
   (`Canc` ne rimuove uno, `Maiusc+Canc` svuota l'elenco).
   Ciò che apri spesso sale un poco, ma conta sempre di più quanto il nome corrisponde.
-- **Prima le cartelle.** Una ricerca per nome elenca prima le cartelle (e le app) che corrispondono e poi i file, ogni
-  gruppo con la corrispondenza migliore in cima. Una ricerca con soli filtri (`date:`, `size:`) mantiene il suo ordine.
+- **Prima i nomi esatti, poi le cartelle.** Una ricerca di una parola elenca prima le cartelle (e le app) con quel nome
+  esatto, poi i file con quel nome esatto (senza estensione), poi le altre cartelle che corrispondono e infine gli altri
+  file; ogni gruppo con la corrispondenza migliore in cima. Una ricerca con soli filtri (`date:`, `size:`) mantiene il suo ordine.
 - **Lanciatore di app.** Le app del menu Start e dello Store compaiono insieme ai file: scrivi `calc`, premi `Invio`.
 - **Icone dei file e dimensioni.** I risultati mostrano le stesse icone di Esplora risorse, così video, foto,
   documenti e archivi si distinguono subito, e a destra la dimensione: per una cartella, il totale dei file che
