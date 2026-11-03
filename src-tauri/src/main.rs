@@ -233,11 +233,7 @@ fn search_n(q: &str, limit: usize) -> Vec<Hit> {
     if query.wants_apps() {
         // an app found by name sits with the folders, ahead of the files
         let tier = if query.terms.is_empty() { 0.0 } else { engine::FIRST };
-        let exact = |name: &str| match query.terms.as_slice() {
-            [t] if name.to_lowercase() == *t => engine::EXACT,
-            _ => 0.0,
-        };
-        hits.extend(apps::search(&app.apps.read().unwrap(), &query, 20).into_iter().map(|(score, a)| Hit::app(&a.name, &a.id, score + tier + exact(&a.name))));
+        hits.extend(apps::search(&app.apps.read().unwrap(), &query, 20).into_iter().map(|(score, a)| Hit::app(&a.name, &a.id, score + tier + engine::name_bonus(&a.name, &query.terms, true))));
     }
     if !query.terms.is_empty() {
         // habits only nudge the order: how well the name matches still comes first

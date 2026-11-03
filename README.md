@@ -32,9 +32,10 @@ Written in Rust, with a native Win32 and Direct2D interface. MIT licensed.
   grey "Recently opened" heading so it reads as history (`Del`
   removes one, `Shift+Del` clears the list). Things you open often rank a little higher, but how well the name
   matches always counts most.
-- **Exact names, then folders first.** A search for one word lists the folders (and apps) named exactly that, then the
-  files named exactly that (without the extension), then the other folders that match, then the other files; each group
-  with the best match first. A search with only filters (`date:`, `size:`) keeps its own order.
+- **Exact names first, then folders.** A search lists the folders (and apps) named exactly what you typed, then the
+  files named so (without the extension), then the folders and the files whose name begins with your words (`.`, `_`,
+  `-` and space separate words, and a word may be unfinished: `the termina list` finds `the.terminal.list.txt`), then
+  the other matches, folders before files; each group with the best match first. A search with only filters (`date:`, `size:`) keeps its own order.
 - **App launcher.** Start menu and Store apps appear in the same results as files: type `calc`, press `Enter`. The
   list is refreshed when the bar opens, so new installs show up without a restart.
 - **File-type icons and sizes.** Results show the same icons as Explorer, and the size at the right: for a folder, the

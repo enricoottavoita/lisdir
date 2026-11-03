@@ -10,6 +10,14 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.18.4] - 2026-11-03
+
+### Fixed
+- A search for several words, or for part of a word, no longer buries the files named like it behind loose folder
+  matches: `the termina list` now finds `the.terminal.list.v2.txt` ahead of unrelated folders. A name that begins with
+  the words typed (`.`, `_`, `-` and space separate words, and a word may be unfinished) comes right after the exact
+  names, folders before files, and before every other match. The same holds for apps.
+
 ## [0.18.2] - 2026-11-03
 
 ### Changed

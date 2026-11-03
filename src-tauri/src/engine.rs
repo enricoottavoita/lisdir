@@ -1614,14 +1614,7 @@ fn matches(q: &Query, idx: &Index, i: usize) -> Option<f32> {
         (false, false) | (true, true) => 0.0,
         (true, false) => 1.0,
     };
-    // a name that is exactly what was typed comes first of all: the folders, then the files (a file also counts
-    // without its extension), then everything else
-    let exact = match q.terms.as_slice() {
-        [t] if eq_fold(name, t, ascii) => true,
-        [t] if !e.is_dir => name.rfind('.').is_some_and(|i| i > 0 && eq_fold(&name[..i], t, ascii)),
-        _ => false,
-    };
-    Some(base + tier + if exact { EXACT } else { 0.0 })
+    Some(base + tier + name_bonus(name, &q.terms, e.is_dir))
 }
 
 /// Added to the score of a folder (and of an app) found by name, so that they come before the files. Far more than any
@@ -1629,8 +1622,49 @@ fn matches(q: &Query, idx: &Index, i: usize) -> Option<f32> {
 /// among the folders themselves.
 pub const FIRST: f32 = 1000.0;
 
-/// Added on top when the name is exactly the typed word: more than `FIRST` and any name match together.
+/// Added on top when the name is exactly what was typed (`EXACT`), or begins with the typed words (`BEGINS`): more than
+/// `FIRST` and any name match together, so a folder or a file named like the query is never lost behind loose matches.
 pub const EXACT: f32 = 10_000.0;
+const BEGINS: f32 = 5_000.0;
+
+/// Does the name start with the words typed, in order? `.`, `_`, `-` and space all separate words, a typed word may be
+/// the start of a longer one (`termina` begins `terminal`), and with `whole` nothing may follow the last, except the
+/// extension of a file.
+fn begins_with(name: &str, terms: &[String], whole: bool, is_dir: bool) -> bool {
+    let sep = |c: char| matches!(c, '.' | '_' | '-' | ' ');
+    let mut n = name.chars().peekable();
+    for (k, t) in terms.iter().enumerate() {
+        while n.next_if(|&c| sep(c)).is_some() {}
+        for tc in t.chars() {
+            if !n.next().is_some_and(|c| c.to_lowercase().eq(tc.to_lowercase())) {
+                return false;
+            }
+        }
+        if k + 1 < terms.len() {
+            while n.next_if(|&c| !sep(c)).is_some() {} // each word may be unfinished: `termina` begins `terminal`
+        }
+    }
+    if !whole {
+        return true;
+    }
+    let rest: String = n.collect();
+    let rest = rest.trim_start_matches(sep);
+    rest.is_empty() || (!is_dir && name.ends_with(&format!(".{rest}")) && !rest.contains('.'))
+}
+
+/// What a name earns for resembling the query: the most for being it, then for beginning with it. The same for a
+/// folder, a file and an app; `FIRST` then puts the folders and apps ahead of the files within each step.
+pub fn name_bonus(name: &str, terms: &[String], is_dir: bool) -> f32 {
+    if terms.is_empty() {
+        0.0
+    } else if begins_with(name, terms, true, is_dir) {
+        EXACT
+    } else if begins_with(name, terms, false, is_dir) {
+        BEGINS
+    } else {
+        0.0
+    }
+}
 
 /// Below this many entries a search runs on one thread (starting threads would cost more than it saves).
 const PARALLEL_FROM: usize = 50_000;
@@ -2318,7 +2352,18 @@ mod tests {
         i.insert(5, Entry::new(0, "reports.txt".into(), false, NOW));
         let ids = search(&i, &q("report"), 10).iter().map(|h| h.1).collect::<Vec<_>>();
         assert_eq!(&ids[..3], [3, 4, 2].as_slice(), "exact folder, then the exact files");
-        assert_eq!(&ids[3..], [1, 5].as_slice(), "then the other folders before the other files");
+        assert_eq!(&ids[3..], [5, 1].as_slice(), "then names that begin with it, then the rest");
+    }
+
+    /// Names that begin with the typed words (dots, dashes and underscores separate words) come before loose matches.
+    #[test]
+    fn names_that_begin_with_the_words_come_before_loose_matches() {
+        let mut i = Index::new();
+        i.insert(4, Entry::new(0, "The.Terminal.List.v2.txt".into(), false, NOW));
+        i.insert(5, Entry::new(0, "the terminal listing archive".into(), true, NOW));
+        i.insert(6, Entry::new(0, "tools - the old terminal for a list".into(), true, NOW));
+        let ids = search(&i, &q("the termina list"), 10).iter().map(|h| h.1).collect::<Vec<_>>();
+        assert_eq!(ids, [5, 4, 6]);
     }
 
     /// An index sized at load grows by small steps: doubling its vectors for a few new files would hold as much memory
