@@ -48,7 +48,9 @@ Written in Rust, with a native Win32 and Direct2D interface. MIT licensed.
 - **Preview and pins.** `Alt+P` shows a preview pane: the start of a text file, or a thumbnail. `Ctrl+P` pins a
   result so it is always listed first.
 - **Search window.** `Ctrl+W` in the bar (or the tray menu) opens a frameless window that stays open: the best 1,000 results
-  in columns (name, folder, size, modified) that sort when you click a title. It exists only while it is open.
+  in columns (name, folder, size, modified) that sort when you click a title. `Shift+click` / `Ctrl+click` pick several
+  results, then `Ctrl+C` / `Ctrl+X` copy or cut them, `Ctrl+Shift+C` copies their paths, `Ctrl+Delete` sends them to the
+  Recycle Bin, and you can drag them out into Explorer. It exists only while it is open.
 - **Other PCs.** Optional and off by default: pair two PCs that run lisdir (home and office, say) and each one also
   lists files found on the other, marked with its name. They cannot be opened from afar, only their path copied.
   Encrypted, direct when the networks allow it; no account. See below.
@@ -225,7 +227,7 @@ does all of this in CI and publishes a GitHub release.
   seconds more per million files, once per disk (and again whenever the cache format changes).
 - There is no way yet to sort results by size or date, and `size:` does not match folders.
 - The text preview reads files as UTF-8: accented letters in older ANSI files show as `�`, and a UTF-16 file shows its icon.
-- The action menu works on one result at a time (several at once comes with the search window).
+- The action menu in the bar works on one result at a time; to act on several, use the search window.
 - If a folder is renamed to a name a hide rule matches, the files already inside it are hidden only after the next
   restart. Path rules name folders, not single files.
 - Scroll bars stay light in the dark themes, because Windows offers no supported way to darken them. The scroll
@@ -236,8 +238,8 @@ does all of this in CI and publishes a GitHub release.
 
 The full list, in priority order, is in [TODO.md](TODO.md). In short:
 
-- **0.18, a search window:** a window that stays open to compare files, sortable columns (size, date), selecting
-  several results at once (copy, cut, delete, drag), filter presets, and a double-tap of `Ctrl` to switch between the
+- **0.18, a search window:** a window that stays open to compare files, sortable columns (size, date) and selecting
+  several results at once are done; still to come: filter presets and a double-tap of `Ctrl` to switch between the
   bar and the window.
 - **0.19, diagnostics:** "Why can't I find this?" (explains why a file is not in the results and how to fix it) and an
   About page with item counts and the state of each disk.

@@ -60,11 +60,68 @@ fn set_clipboard(items: &[(u32, Vec<u8>)]) -> bool {
     }
 }
 
-/// Copy or cut the file the way Explorer does, so Ctrl+V in a folder pastes (or moves) it.
-pub fn copy_file(path: &str, cut: bool) -> bool {
+/// Copy or cut the files the way Explorer does, so Ctrl+V in a folder pastes (or moves) them.
+pub fn copy_files(paths: &[&str], cut: bool) -> bool {
     let effect = unsafe { RegisterClipboardFormatW(wide("Preferred DropEffect").as_ptr()) };
     let drop_effect: u32 = if cut { 2 } else { 1 }; // DROPEFFECT_MOVE / DROPEFFECT_COPY
-    set_clipboard(&[(CF_HDROP, drop_files(&[path])), (effect, drop_effect.to_le_bytes().to_vec())])
+    set_clipboard(&[(CF_HDROP, drop_files(paths)), (effect, drop_effect.to_le_bytes().to_vec())])
+}
+
+/// Move the files to the Recycle Bin (so it can be undone), after asking when there are several. False if the user said
+/// no or Windows refused.
+pub fn recycle(paths: &[&str], owner: HWND) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONQUESTION, MB_YESNO};
+    if paths.len() > 1 {
+        let text = if crate::italian() { format!("Spostare {} elementi nel Cestino?", paths.len()) } else { format!("Move {} items to the Recycle Bin?", paths.len()) };
+        if unsafe { MessageBoxW(owner, wide(&text).as_ptr(), wide("lisdir").as_ptr(), MB_YESNO | MB_ICONQUESTION) } != IDYES {
+            return false;
+        }
+    }
+    let mut from: Vec<u16> = paths.iter().flat_map(|p| wide(p)).collect();
+    from.push(0); // the list ends with an empty name
+    let mut op = SHFILEOPSTRUCTW { hwnd: owner, wFunc: FO_DELETE, pFrom: from.as_ptr(), fFlags: (FOF_ALLOWUNDO | FOF_WANTNUKEWARNING) as u16, ..unsafe { std::mem::zeroed() } };
+    unsafe { SHFileOperationW(&mut op) == 0 && op.fAnyOperationsAborted == 0 }
+}
+
+/// Start a drag of these files and return when it ends, dropped or cancelled.
+pub fn drag(paths: &[&str]) {
+    use windows::{
+        core::{implement, BOOL},
+        Win32::{
+            Foundation::{DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, S_OK},
+            System::{Com::IDataObject, Ole::*, SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS}},
+            UI::Shell::{Common::ITEMIDLIST, ILFree, SHCreateDataObject, SHParseDisplayName},
+        },
+    };
+    #[implement(IDropSource)]
+    struct Source;
+    impl IDropSource_Impl for Source_Impl {
+        fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> windows::core::HRESULT {
+            if escape.as_bool() { DRAGDROP_S_CANCEL } else if keys.0 & MK_LBUTTON.0 == 0 { DRAGDROP_S_DROP } else { S_OK }
+        }
+        fn GiveFeedback(&self, _: DROPEFFECT) -> windows::core::HRESULT {
+            DRAGDROP_S_USEDEFAULTCURSORS
+        }
+    }
+    unsafe {
+        let _ = OleInitialize(None);
+        let lists: Vec<*mut ITEMIDLIST> = paths
+            .iter()
+            .filter_map(|p| {
+                let (name, mut l) = (wide(p), std::ptr::null_mut());
+                SHParseDisplayName(windows::core::PCWSTR(name.as_ptr()), None, &mut l, 0, None).ok().map(|_| l)
+            })
+            .collect();
+        let items: Vec<*const ITEMIDLIST> = lists.iter().map(|l| *l as *const _).collect();
+        if let Ok(data) = SHCreateDataObject::<Option<&IDataObject>, IDataObject>(None, Some(&items), None) {
+            let src: IDropSource = Source.into();
+            let mut effect = DROPEFFECT_NONE;
+            let _ = DoDragDrop(&data, &src, DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, &mut effect);
+        }
+        for l in lists {
+            ILFree(Some(l));
+        }
+    }
 }
 
 pub fn copy_text(s: &str) -> bool {
@@ -219,12 +276,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Puts a file of its own in the Recycle Bin, so run by hand: cargo test recycle -- --ignored
+    #[test]
+    #[ignore]
+    fn recycle_moves_the_file_away() {
+        let f = std::env::temp_dir().join("lisdir_recycle_test.txt");
+        std::fs::write(&f, "x").unwrap();
+        assert!(recycle(&[f.to_str().unwrap()], null_mut()));
+        assert!(!f.exists());
+    }
+
     /// Replaces your clipboard, so run by hand: cargo test clipboard -- --ignored
     #[test]
     #[ignore]
     fn clipboard_holds_the_file() {
         let exe = std::env::current_exe().unwrap();
-        assert!(copy_file(exe.to_str().unwrap(), false));
+        assert!(copy_files(&[exe.to_str().unwrap()], false));
         let ps = |c: &str| String::from_utf8(std::process::Command::new("powershell").args(["-NoProfile", "-Command", c]).output().unwrap().stdout).unwrap();
         assert_eq!(ps("(Get-Clipboard -Format FileDropList).FullName").trim(), exe.to_str().unwrap());
         assert!(copy_text("C:\\città"));

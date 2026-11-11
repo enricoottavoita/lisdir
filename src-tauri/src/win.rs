@@ -3,7 +3,7 @@
 //! Like the bar, it runs on the main thread and gets slow work back as posted messages carrying a boxed value.
 use crate::{bar, engine::wide, gfx::{self, Canvas, Theme}, icons, peer, query::Clock, service::Hit, t};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ptr::{null, null_mut},
     sync::{atomic::{AtomicPtr, AtomicU64, Ordering::SeqCst}, mpsc::{channel, Sender}},
     time::Duration,
@@ -18,7 +18,7 @@ use windows_sys::Win32::{
     UI::{
         Controls::{EM_GETSEL, EM_REPLACESEL, EM_SETSEL, WM_MOUSELEAVE},
         HiDpi::{GetDpiForSystem, GetDpiForWindow},
-        Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_BACK, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_MENU, VK_NEXT, VK_PRIOR, VK_SHIFT, VK_UP, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
+        Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_MENU, VK_NEXT, VK_PRIOR, VK_SHIFT, VK_UP, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
         WindowsAndMessaging::*,
     },
 };
@@ -67,6 +67,12 @@ struct Win {
     /// the rows as shown: both answers, sorted by the clicked column
     rows: Vec<Hit>,
     sel: usize,
+    /// the results picked with Shift or Ctrl (by path, so a sort does not lose them); empty = just the selected row
+    marked: HashSet<String>,
+    /// where a Shift range starts
+    anchor: usize,
+    /// a button pressed on a row, not yet a click or a drag: (x, y, row)
+    down: Option<(f32, f32, usize)>,
     /// how far the list is scrolled
     top: f32,
     seq: u64,
@@ -212,6 +218,47 @@ fn hit_test(s: &Win, x: f32, y: f32) -> (Option<Col>, Option<usize>) {
     (None, (i < s.rows.len()).then_some(i))
 }
 
+// ---------------------------------------------------------------- picking several
+
+/// The paths of the rows from `a` to `b`, both included, whichever comes first.
+fn range_paths(rows: &[Hit], a: usize, b: usize) -> HashSet<String> {
+    rows.iter().skip(a.min(b)).take(a.abs_diff(b) + 1).map(|h| h.path.clone()).collect()
+}
+
+/// Pick the rows from the anchor to `to` (Shift+click, Shift+arrows) and move the selection there.
+fn pick_range(s: &mut Win, to: usize) {
+    s.marked = range_paths(&s.rows, s.anchor, to);
+    s.sel = to;
+}
+
+/// Back to a single selected row.
+fn pick_one(s: &mut Win, i: usize) {
+    s.marked.clear();
+    (s.sel, s.anchor) = (i, i);
+}
+
+/// Ctrl+click: add the row to the picked ones, or take it out.
+fn pick_toggle(s: &mut Win, i: usize) {
+    if s.marked.is_empty() {
+        if let Some(h) = s.rows.get(s.sel) {
+            s.marked.insert(h.path.clone());
+        }
+    }
+    let path = s.rows[i].path.clone();
+    if !s.marked.remove(&path) {
+        s.marked.insert(path);
+    }
+    (s.sel, s.anchor) = (i, i);
+}
+
+/// What an action works on: the picked rows in the order shown, or the selected row.
+fn targets(s: &Win) -> Vec<Hit> {
+    if s.marked.is_empty() {
+        return s.rows.get(s.sel).cloned().into_iter().collect();
+    }
+    s.rows.iter().filter(|h| s.marked.contains(&h.path)).cloned().collect()
+}
+
 // ---------------------------------------------------------------- state changes
 
 /// Show `local` and `more` in the order the columns ask for; the selection stays on the same result when it can.
@@ -223,6 +270,8 @@ unsafe fn rebuild(s: &mut Win, keep: bool) {
     s.sel = cur.filter(|_| keep).and_then(|c| s.rows.iter().position(|h| h.path == c)).unwrap_or(0);
     if !keep {
         s.top = 0.0;
+        s.marked.clear();
+        s.anchor = 0;
     }
     scroll_to_selection(s);
     repaint(s);
@@ -250,15 +299,43 @@ unsafe fn run(s: &mut Win) {
     let _ = s.searches.send((seq, q));
 }
 
+/// Take the files that are gone (deleted, or moved by a drop) out of the list.
+unsafe fn forget_missing(s: &mut Win) {
+    let gone = |h: &Hit| h.peer.is_empty() && !h.app && !std::path::Path::new(&h.path).exists();
+    s.local.retain(|h| !gone(h));
+    s.marked.clear();
+    rebuild(s, true);
+}
+
+/// More than this many files and Enter does nothing, so a "pick all" cannot open a thousand windows.
+const OPEN_MAX: usize = 10;
+
 unsafe fn act(s: &mut Win, action: &str) {
-    let Some(h) = s.rows.get(s.sel).cloned() else { return };
-    if !h.peer.is_empty() {
-        return crate::act("path", &h); // not on this PC: only its path can be copied
-    }
+    let Some(cur) = s.rows.get(s.sel).cloned() else { return };
+    let all = targets(s);
+    // files on this PC; the other PCs' results and the applications cannot be copied, cut or deleted
+    let local: Vec<&str> = all.iter().filter(|h| h.peer.is_empty() && !h.app).map(|h| h.path.as_str()).collect();
     match action {
-        "open" | "folder" if h.app && action == "folder" => {}
-        "open" | "folder" => crate::open(&h, action == "folder"),
-        _ if !h.app => crate::act(action, &h),
+        "path" => {
+            crate::actions::copy_text(&all.iter().map(|h| h.path.as_str()).collect::<Vec<_>>().join("\r\n"));
+        }
+        "copy" | "cut" if !local.is_empty() => {
+            crate::actions::copy_files(&local, action == "cut");
+        }
+        "delete" => {
+            if !local.is_empty() && crate::actions::recycle(&local, s.hwnd) {
+                forget_missing(s);
+            }
+        }
+        "open" if all.iter().any(|h| h.peer.is_empty()) => {
+            if all.len() <= OPEN_MAX {
+                all.iter().filter(|h| h.peer.is_empty()).for_each(|h| crate::open(h, false));
+            }
+        }
+        "open" | "copy" | "cut" if !cur.peer.is_empty() => crate::act("path", &cur), // not on this PC: only its path can be copied
+        "folder" if cur.peer.is_empty() && !cur.app => crate::open(&cur, true),
+        "open" | "folder" | "copy" | "cut" => {}
+        _ if !cur.app && cur.peer.is_empty() => crate::act(action, &cur),
         _ => {}
     }
 }
@@ -277,10 +354,28 @@ pub unsafe fn key(m: &MSG) -> bool {
     let page = ((list_view(s) / ROW_H) as usize).max(1);
     let last = s.rows.len().saturating_sub(1);
     match vk {
-        VK_DOWN => s.sel = (s.sel + 1).min(last),
-        VK_UP => s.sel = s.sel.saturating_sub(1),
-        VK_NEXT => s.sel = (s.sel + page).min(last),
-        VK_PRIOR => s.sel = s.sel.saturating_sub(page),
+        VK_DOWN | VK_UP | VK_NEXT | VK_PRIOR => {
+            s.sel = match vk {
+                VK_DOWN => (s.sel + 1).min(last),
+                VK_UP => s.sel.saturating_sub(1),
+                VK_NEXT => (s.sel + page).min(last),
+                _ => s.sel.saturating_sub(page),
+            };
+            if shift {
+                pick_range(s, s.sel);
+            } else {
+                pick_one(s, s.sel);
+            }
+        }
+        0x41 /* A */ if ctrl && shift => {
+            s.marked = s.rows.iter().map(|h| h.path.clone()).collect();
+            repaint(s);
+            return true;
+        }
+        VK_DELETE if ctrl => {
+            act(s, "delete");
+            return true;
+        }
         VK_ESCAPE => {
             DestroyWindow(s.hwnd);
             return true;
@@ -326,7 +421,8 @@ unsafe fn paint(s: &mut Win) {
         }
     }
     let (n, it) = (fmt(s.rows.len()), crate::italian());
-    let status = if gfx::text_of(s.edit).trim().is_empty() {
+    let picked = s.marked.len();
+    let mut status = if gfx::text_of(s.edit).trim().is_empty() {
         t("Type to search", "Scrivi per cercare").to_string()
     } else if s.rows.len() >= LIMIT {
         if it { format!("I migliori {n} risultati") } else { format!("The best {n} results") }
@@ -335,6 +431,9 @@ unsafe fn paint(s: &mut Win) {
     } else {
         format!("{n} results")
     };
+    if picked > 1 {
+        status += &if it { format!(" · {picked} selezionati") } else { format!(" · {picked} selected") };
+    }
     let clock = Clock::system();
     let Some(cv) = s.canvas.as_mut() else { return };
     cv.begin(theme.bg);
@@ -374,7 +473,7 @@ unsafe fn paint(s: &mut Win) {
     for i in first..(first + shown) {
         let hit = &s.rows[i];
         let y = list_top() + i as f32 * ROW_H - s.top;
-        if i == s.sel {
+        if if s.marked.is_empty() { i == s.sel } else { s.marked.contains(&hit.path) } {
             cv.fill((6.0, y, w - 12.0, ROW_H), theme.sel, 6.0);
         }
         if let Some(Some(bmp)) = s.icons.get(&hit.icon) {
@@ -400,7 +499,7 @@ unsafe fn paint(s: &mut Win) {
     for r in [(0.0, 0.0, w, 1.0), (0.0, h - 1.0, w, 1.0), (0.0, 0.0, 1.0, h), (w - 1.0, 0.0, 1.0, h)] {
         cv.fill(r, theme.line, 0.0);
     }
-    let hint = t("↑↓ select · Enter open · Ctrl+Enter show in folder · click a title to sort · Esc close", "↑↓ seleziona · Invio apri · Ctrl+Invio mostra nella cartella · clic su un titolo per ordinare · Esc chiudi");
+    let hint = t("Shift/Ctrl+click several · Enter open · Ctrl+C copy · Ctrl+Del delete · drag out · Esc close", "Maiusc/Ctrl+clic più file · Invio apri · Ctrl+C copia · Ctrl+Canc elimina · trascina fuori · Esc chiudi");
     cv.text(&format!("{status} · {hint}"), 12.0, false, (PAD, h - FOOT_H + 6.0, w - 2.0 * PAD, 16.0), theme.dim);
 
     if !cv.end() {
@@ -446,6 +545,19 @@ pub fn refresh() {
         DwmSetWindowAttribute(s.hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, (&round as *const i32).cast(), 4);
         SendMessageW(s.edit, 0x1501 /* EM_SETCUEBANNER */, 1, wide(t("Search files and folders…", "Cerca file e cartelle…")).as_ptr() as isize);
         repaint(s);
+    }
+}
+
+/// Drag the picked files (or the pressed row) out of the window, into Explorer or any program that takes files.
+unsafe fn drag(s: &mut Win, i: usize) {
+    if !s.marked.contains(&s.rows[i].path) {
+        pick_one(s, i);
+    }
+    let all = targets(s);
+    let paths: Vec<&str> = all.iter().filter(|h| h.peer.is_empty() && !h.app).map(|h| h.path.as_str()).collect();
+    if !paths.is_empty() {
+        crate::actions::drag(&paths);
+        forget_missing(s); // a drop that moves leaves the files elsewhere
     }
 }
 
@@ -539,6 +651,13 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
                 s.hover = hover;
                 repaint(s);
             }
+            if let Some((x0, y0, i)) = s.down.filter(|_| w & 1 != 0) {
+                if (x - x0).hypot(y - y0) > 5.0 {
+                    s.down = None;
+                    drag(s, i);
+                    return 0;
+                }
+            }
             if !s.tracking {
                 let mut e = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
                 TrackMouseEvent(&mut e);
@@ -570,15 +689,34 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
                     rebuild(s, true);
                 }
                 (_, Some(i)) => {
-                    s.sel = i;
+                    let (ctrl, shift) = (GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_SHIFT as i32) < 0);
                     if msg == WM_LBUTTONDBLCLK {
+                        s.sel = i;
                         act(s, "open");
+                    } else if shift {
+                        pick_range(s, i);
+                    } else if ctrl {
+                        pick_toggle(s, i);
+                    } else if s.marked.len() > 1 && s.marked.contains(&s.rows[i].path) {
+                        // maybe the start of a drag of the whole pick: decided when the button goes up
+                        s.sel = i;
+                        s.down = Some((x, y, i));
+                    } else {
+                        pick_one(s, i);
+                        s.down = (msg == WM_LBUTTONDOWN).then_some((x, y, i));
                     }
                     repaint(s);
                 }
                 _ => {}
             }
             SetFocus(s.edit);
+        }
+        WM_LBUTTONUP => {
+            // a click on one of several picked rows, without a drag: that row alone
+            if let Some((_, _, i)) = s.down.take() {
+                pick_one(s, i);
+                repaint(s);
+            }
         }
         WM_MOUSEWHEEL => {
             let delta = (w >> 16) as i16 as f32 / 120.0;
@@ -660,7 +798,7 @@ pub fn open(query: &str) {
             brush: CreateSolidBrush(0),
             font: null_mut(),
             scale: sys,
-            local: vec![], more: vec![], rows: vec![], sel: 0, top: 0.0, seq: 0, sort: None,
+            local: vec![], more: vec![], rows: vec![], sel: 0, marked: HashSet::new(), anchor: 0, down: None, top: 0.0, seq: 0, sort: None,
             icons: HashMap::new(),
             hover: None, tracking: false,
             searches, icon_jobs,
@@ -749,6 +887,15 @@ mod tests {
         assert_eq!(folder_of(&hit("a.txt", r"C:\docs\a.txt", 0, 0)), r"C:\docs");
         assert_eq!(folder_of(&hit("a.txt", r"C:\a.txt", 0, 0)), r"C:\");
         assert_eq!(folder_of(&hit("a.txt", r"\\nas\share\a.txt", 0, 0)), r"\\nas\share");
+    }
+
+    #[test]
+    fn a_range_runs_from_the_anchor_either_way() {
+        let rows: Vec<Hit> = (0..5).map(|i| hit(&format!("f{i}"), &format!(r"C:\f{i}"), 0, 0)).collect();
+        let paths = |a, b| { let mut v: Vec<_> = range_paths(&rows, a, b).into_iter().collect(); v.sort(); v };
+        assert_eq!(paths(1, 3), [r"C:\f1", r"C:\f2", r"C:\f3"]);
+        assert_eq!(paths(3, 1), paths(1, 3));
+        assert_eq!(paths(2, 2), [r"C:\f2"]);
     }
 
     #[test]

@@ -49,7 +49,7 @@ unelevated, and every feature ships with a test or a measured check.
 ## 0.18 — search window
 - [x] Persistent search window that stays open to compare files (first version: `Ctrl+W`, tray menu)
 - [x] Sortable columns including size and date modified (the best 1,000 results)
-- [ ] Multi-select: copy, cut, delete, copy paths, drag several files at once
+- [x] Multi-select: copy, cut, delete, copy paths, drag several files at once (0.18.5)
 - [ ] Filter presets (Documents, Pictures, Last 7 days) that show their result counts before you apply them;
       Ctrl+click combines several
 - [ ] Switch between the quick bar and the window with double-tap `Ctrl`, keeping the query

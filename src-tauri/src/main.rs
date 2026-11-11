@@ -299,7 +299,7 @@ fn open(h: &Hit, folder: bool) {
 /// The action menu: "copy" / "cut" (the file, as in Explorer), "path", "openas", "terminal", "properties".
 fn act(action: &str, h: &Hit) {
     match action {
-        "copy" | "cut" => { actions::copy_file(&h.path, action == "cut"); }
+        "copy" | "cut" => { actions::copy_files(&[&h.path], action == "cut"); }
         "path" => { actions::copy_text(&h.path); }
         "terminal" => actions::terminal(&h.path, h.is_dir),
         v @ ("openas" | "properties") => actions::verb(v, &h.path),

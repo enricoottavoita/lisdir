@@ -52,8 +52,9 @@ Scritto in Rust, con interfaccia nativa Win32 e Direct2D. Licenza MIT.
   Carta), l'avvio con Windows e cosa viene indicizzato: quali dischi, altre cartelle (con il selettore di cartelle) e
   regole per ciò che va lasciato fuori dall'indice o nascosto dai risultati.
 - **Finestra di ricerca.** `Ctrl+W` nella barra (o il menu dell'icona) apre una finestra senza cornice che resta aperta: i migliori
-  1.000 risultati in colonne (nome, cartella, dimensione, modificato) che si ordinano cliccando un titolo. Esiste solo
-  finché è aperta.
+  1.000 risultati in colonne (nome, cartella, dimensione, modificato) che si ordinano cliccando un titolo. `Maiusc+clic` / `Ctrl+clic` scelgono più
+  risultati, poi `Ctrl+C` / `Ctrl+X` li copiano o tagliano, `Ctrl+Maiusc+C` copia i percorsi, `Ctrl+Canc` li sposta nel
+  Cestino e puoi trascinarli in Explorer. Esiste solo finché è aperta.
 - **Altri PC.** Nelle impostazioni, sezione *Altri PC*: accendi l'opzione, salva e riavvia lisdir (su entrambi i PC). Poi abbinali: su un
 PC premi **Permetti un nuovo PC** (aperto per due minuti), sull'altro incolla il codice del primo e premi **Abbina**. Il
 due PC mostrano un codice di verifica di 4 caratteri; il primo mostra anche chi lo chiede, e confermi lì solo se il
@@ -193,7 +194,7 @@ cargo build --release
   più per milione di file, una volta per disco (e di nuovo se cambia il formato della cache).
 - Non si possono ancora ordinare i risultati per dimensione o data, e `size:` non trova le cartelle.
 - L'anteprima legge il testo come UTF-8: le lettere accentate dei vecchi file ANSI appaiono come `�` e un file UTF-16 mostra la sua icona.
-- Il menu azioni agisce su un risultato alla volta (più file insieme arriveranno con la finestra di ricerca).
+- Il menu azioni della barra agisce su un risultato alla volta; per agire su più file usa la finestra di ricerca.
 - Le regole di nascondimento valgono per ciò che è indicizzato; le regole con un percorso indicano cartelle, non singoli
   file.
 - Le barre di scorrimento restano chiare nei temi scuri, perché Windows non offre un modo supportato per scurirle.
@@ -205,7 +206,7 @@ cargo build --release
 L'elenco completo, in ordine di priorità, è in [TODO.md](TODO.md). In breve:
 
 - **0.18, una finestra di ricerca:** una finestra che resta aperta per confrontare i file, colonne ordinabili
-  (dimensione, data), selezione di più risultati insieme (copia, taglia, elimina, trascina), filtri predefiniti e un
+  (dimensione, data) e selezione di più risultati insieme sono fatte; restano i filtri predefiniti e un
   doppio tocco di `Ctrl` per passare tra la barra e la finestra.
 - **0.19, diagnostica:** «Perché non lo trovo?» (spiega perché un file non è nei risultati e come rimediare) e una
   pagina Informazioni con il numero di voci e lo stato di ogni disco.

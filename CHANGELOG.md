@@ -10,6 +10,16 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.18.5] - 2026-11-11
+
+### Added
+- The search window can pick several results: `Shift+click` for a range, `Ctrl+click` to add or remove one,
+  `Shift+Up/Down/PageUp/PageDown` to extend, `Ctrl+Shift+A` for all. On the picked files `Ctrl+C` and `Ctrl+X` copy and
+  cut them as Explorer does, `Ctrl+Shift+C` copies their paths (one per line), `Ctrl+Delete` moves them to the Recycle
+  Bin (asking first when there are several), `Enter` opens them (up to 10), and dragging them out of the window drops
+  them in Explorer or any program that takes files. Results from other PCs and applications are left out of copy, cut,
+  delete and drag; their paths can still be copied.
+
 ## [0.18.4] - 2026-11-03
 
 ### Fixed
