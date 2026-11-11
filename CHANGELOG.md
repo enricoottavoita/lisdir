@@ -10,6 +10,9 @@ when releasing.
 
 ## [Unreleased]
 
+### Changed
+- The shortcut list in the settings now covers picking several results in the search window.
+
 ## [0.18.5] - 2026-11-11
 
 ### Added
