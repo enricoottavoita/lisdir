@@ -145,11 +145,7 @@ fn reload_apps(app: &App) {
 fn start(app: &App) {
     *app.usage.lock().unwrap() = usage::Usage::load(engine::data_dir().join("usage.txt"));
     *app.pins.lock().unwrap() = usage::Usage::load(engine::data_dir().join("pins.txt"));
-    std::thread::spawn(|| {
-        if service::query("").is_none() {
-            service::start_helper(); // no-op (fails quietly) until the service has been installed
-        }
-    });
+    std::thread::spawn(service::keep_helper_alive);
     reload_apps(app);
     let (folders, disks_off) = {
         let s = app.settings.read().unwrap();

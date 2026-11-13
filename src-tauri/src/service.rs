@@ -233,6 +233,13 @@ fn handle(f: File, vols: Volumes, busy: Arc<AtomicUsize>) {
 
 /// `lisdir --helper`: load the indexes and serve the pipe forever.
 pub fn run_helper() {
+    // a panic in the helper would otherwise vanish with it: leave a line in helper.log
+    std::panic::set_hook(Box::new(|info| {
+        use std::io::Write;
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(engine::data_dir().join("helper.log")) {
+            let _ = writeln!(f, "{} {info}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
+        }
+    }));
     let (vols, busy): (Volumes, _) = (Default::default(), Arc::new(AtomicUsize::new(0)));
     let Some(sa) = pipe_security() else { return };
     let name = wide(PIPE);
@@ -350,6 +357,18 @@ pub fn start_helper() -> bool {
     quiet("schtasks", &["/Run", "/TN", TASK])
 }
 
+static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Keep the helper up: start it, and start it again whenever its pipe disappears (it has died, see helper.log).
+pub fn keep_helper_alive() {
+    loop {
+        if !STOPPING.load(SeqCst) && query("").is_none() {
+            start_helper(); // no-op (fails quietly) until the service has been installed
+        }
+        std::thread::sleep(Duration::from_secs(10));
+    }
+}
+
 /// Whether the helper is up. A busy pipe counts: only a missing one means it is not running.
 pub fn running() -> bool {
     !matches!(OpenOptions::new().write(true).open(PIPE), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
@@ -369,6 +388,7 @@ pub fn stop_helper_and_wait() {
 /// Ask the helper to quit (`Q`), so the task can start it again from a replaced exe. A helper older than 0.14.3
 /// ignores `Q`; `/End` is the fallback, which may be refused unelevated: then the old helper serves until sign-out.
 pub fn stop_helper() {
+    STOPPING.store(true, SeqCst); // the watchdog must not bring it back: we are quitting or updating
     if let Ok(f) = OpenOptions::new().write(true).open(PIPE) {
         let _ = writeln!(&f, "Q");
     }

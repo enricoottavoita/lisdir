@@ -223,6 +223,8 @@ does all of this in CI and publishes a GitHub release.
   share); later starts use the cache.
 - Type-to-search does not check whether something is selected, and does not work over elevated windows.
 - Setting up the elevated helper needs administrator rights once; after that the bar needs none.
+- If the helper dies, lisdir starts it again within 10 seconds; local disks cannot be searched in between. A panic in
+  the helper is logged in `%LOCALAPPDATA%\lisdir\helper.log`.
 - The first scan of a local disk reads one file record per file to collect sizes and times; that takes about 11
   seconds more per million files, once per disk (and again whenever the cache format changes).
 - There is no way yet to sort results by size or date, and `size:` does not match folders.

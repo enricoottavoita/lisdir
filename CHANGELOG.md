@@ -10,6 +10,14 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.18.6] - 2026-11-13
+
+### Fixed
+- When the elevated helper stopped (it had crashed), searches on the local NTFS disks silently found nothing until
+  lisdir was restarted. lisdir now checks the helper every 10 seconds and starts it again if it is gone.
+- A panic in the helper is now written to `helper.log` in lisdir's data folder (`%LOCALAPPDATA%\lisdir`), so a crash
+  leaves a trace. (The cause of the crashes seen on 2026-11-11, exit code `0xC0000409`, is still being looked for.)
+
 ### Changed
 - The shortcut list in the settings now covers picking several results in the search window.
 

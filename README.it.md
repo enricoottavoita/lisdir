@@ -190,6 +190,8 @@ cargo build --release
   richiede di fermare prima l'helper (l'installer lo gestisce negli aggiornamenti).
 - "Digita per cercare" non controlla se c'è qualcosa di selezionato e non funziona sopra finestre elevate.
 - I diritti di amministratore servono una volta, per configurare l'helper elevato; poi la barra non li richiede.
+- Se l'helper si ferma, lisdir lo riavvia entro 10 secondi; nel frattempo i dischi locali non si possono cercare. Un
+  panic dell'helper viene scritto in `%LOCALAPPDATA%\lisdir\helper.log`.
 - La prima scansione di un disco locale legge un record per file per raccogliere dimensioni e date: circa 11 secondi in
   più per milione di file, una volta per disco (e di nuovo se cambia il formato della cache).
 - Non si possono ancora ordinare i risultati per dimensione o data, e `size:` non trova le cartelle.
