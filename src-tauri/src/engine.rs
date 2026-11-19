@@ -1117,6 +1117,22 @@ pub const WALK_INTERVAL: Duration = Duration::from_secs(600);
 /// as files written on a NAS by the NAS itself.
 pub const WATCHED_WALK_INTERVAL: Duration = Duration::from_secs(3600);
 
+/// The wait before the next walk. A share that takes long to walk (big, or reached over a VPN) is walked at most a
+/// tenth of the time: a 20-minute walk waits 3 hours, not 10 minutes, so the server is not read almost without a pause.
+pub fn next_walk(interval: Duration, took: Duration) -> Duration {
+    interval.max(took * 9)
+}
+
+/// Has this share ever reported a change? Remembered in a file, because a quiet share (a home folder) may report
+/// nothing for hours after a start, and it would be walked every 10 minutes all that time.
+pub fn reported(root: &str) -> bool {
+    cache_path(root).with_extension("watch").exists()
+}
+
+pub fn set_reported(root: &str) {
+    let _ = std::fs::write(cache_path(root).with_extension("watch"), b"");
+}
+
 /// More changed paths than this at once are left to a walk.
 pub const MAX_CHANGES: usize = 1000;
 
@@ -1766,6 +1782,14 @@ mod tests {
     // 2023-11-14 22:13:20 UTC; local time zone = UTC
     const NOW: i64 = 1_700_000_000;
     const DAYS: i64 = 86_400;
+
+    #[test]
+    fn a_slow_share_is_walked_at_most_a_tenth_of_the_time() {
+        let min = |m: u64| Duration::from_secs(m * 60);
+        assert_eq!(next_walk(WALK_INTERVAL, min(0)), WALK_INTERVAL, "a fast share keeps its 10 minutes");
+        assert_eq!(next_walk(WALK_INTERVAL, min(20)), min(180), "a 20-minute walk waits 3 hours");
+        assert_eq!(next_walk(WATCHED_WALK_INTERVAL, min(5)), WATCHED_WALK_INTERVAL);
+    }
 
     fn q(s: &str) -> Query {
         Query::parse(s, &Clock::new(NOW, 0))

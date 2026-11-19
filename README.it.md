@@ -21,7 +21,9 @@ Scritto in Rust, con interfaccia nativa Win32 e Direct2D. Licenza MIT.
   le modifiche vengono aggiunte a un piccolo registro, senza riscrivere tutta la cache.
 - **Cartelle di rete e altri dischi.** Unità mappate, percorsi UNC (condivisioni SMB) e dischi locali non NTFS
   (chiavette USB, exFAT, FAT) sono indicizzati con una scansione parallela. Le modifiche segnalate dal server compaiono
-  in pochi secondi; una condivisione viene riscansionata ogni ora se le segnala, altrimenti ogni 10 minuti. Una
+  in pochi secondi; una condivisione viene riscansionata ogni ora se le ha segnalate almeno una volta, altrimenti ogni
+  10 minuti, e una condivisione lenta da scansionare (per esempio via VPN) aspetta almeno 9 volte la sua ultima
+  scansione. Una
   chiavetta mantiene i suoi risultati mentre è scollegata. Alla primissima scansione i risultati compaiono mentre è in corso.
 - **Digita per cercare.** Con una cartella di Esplora risorse o il Desktop in primo piano, scrivere delle lettere
   apre la barra con quelle lettere già inserite (si disattiva dal menu dell'icona o dalle impostazioni).

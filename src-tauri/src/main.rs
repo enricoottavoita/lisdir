@@ -65,7 +65,7 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
     let mut wait = engine::WALK_INTERVAL;
     // started before a walk: what changes during it is applied after it
     let mut changes = engine::watch(&root);
-    let mut reports = false; // it may accept a watch and never report anything
+    let mut reports = engine::reported(&root); // it may accept a watch and never report anything
     loop {
         if stale {
             changes = changes.or_else(|| engine::watch(&root));
@@ -75,6 +75,7 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
                 let v = vol.read().unwrap();
                 (v.idx.is_empty(), v.idx.sized_like())
             };
+            let started = std::time::Instant::now();
             let w = engine::walk(&root, streamed.then_some(&*vol), room);
             if w.reliable() {
                 {
@@ -85,7 +86,8 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
                     v.dirty = true;
                 }
                 let _ = engine::save_shared(&vol);
-                wait = if reports { engine::WATCHED_WALK_INTERVAL } else { engine::WALK_INTERVAL };
+                let watched = reports && changes.is_some();
+                wait = engine::next_walk(if watched { engine::WATCHED_WALK_INTERVAL } else { engine::WALK_INTERVAL }, started.elapsed());
             } else {
                 // share offline or drive unplugged: keep the old results (and cache) and retry soon
                 wait = engine::RETRY_INTERVAL;
@@ -101,7 +103,10 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
             };
             match rx.recv_timeout(left) {
                 Ok(Some(first)) => {
-                    reports = true;
+                    if !reports {
+                        reports = true;
+                        engine::set_reported(&root);
+                    }
                     std::thread::sleep(std::time::Duration::from_secs(1)); // a copy reports a file many times
                     let mut paths = std::collections::HashSet::from([first]);
                     let mut too_many = false;
@@ -117,7 +122,11 @@ fn refresh(vol: Shared, mut stale: bool, busy: Arc<AtomicUsize>) {
                     paths.iter().for_each(|p| engine::refresh_path(&vol, p));
                 }
                 Ok(None) | Err(RecvTimeoutError::Timeout) => break,
-                Err(RecvTimeoutError::Disconnected) => (changes, reports) = (None, false),
+                Err(RecvTimeoutError::Disconnected) => {
+                    // the watch dropped (a VPN that blinked, a server restart): listen again in a minute, not at the next walk
+                    std::thread::sleep(engine::RETRY_INTERVAL.min(left));
+                    changes = engine::watch(&root);
+                }
             }
         }
         stale = true;

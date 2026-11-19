@@ -21,7 +21,8 @@ Written in Rust, with a native Win32 and Direct2D interface. MIT licensed.
   restarts only the changes are appended to a small log, not the whole cache rewritten.
 - **Network folders and other disks.** Mapped drives, UNC paths (SMB shares) and local disks that are not NTFS (USB
   sticks, exFAT, FAT) are indexed by a parallel directory walk. Changes the server reports appear within
-  seconds; a share is walked again every hour if it reports them, otherwise every 10 minutes. A stick keeps its
+  seconds; a share is walked again every hour if it has ever reported them, otherwise every 10 minutes, and a share
+  that takes long to walk (over a VPN, for example) waits at least 9 times its last walk. A stick keeps its
   results while unplugged. On the very first walk, results appear while it is still running.
 - **Type to search.** With an Explorer folder or the desktop focused, typing letters opens the bar with those
   letters already entered (switch it off in the tray menu or the settings).

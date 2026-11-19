@@ -10,6 +10,21 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.18.7] - 2026-11-19
+
+### Fixed
+- Network folders: a share that reports its changes was still walked again every 10 minutes when little changed on
+  it (a home folder, for example), because lisdir trusted the reports only after the first one arrived since it
+  started. lisdir now remembers that a share has reported a change (a `.watch` file next to its index) and walks it
+  once an hour, with changes still arriving within seconds.
+- When the watch on a share dropped (a VPN that blinked, a server restart), lisdir stopped listening until the next
+  walk. It now listens again after a minute.
+
+### Changed
+- A share that takes long to walk (big, or reached over a VPN) is walked at most a tenth of the time: the wait before
+  the next walk is at least 9 times the last walk. A 20-minute walk over a VPN now waits 3 hours instead of 10
+  minutes, so the server is no longer read almost without a pause.
+
 ## [0.18.6] - 2026-11-13
 
 ### Fixed
@@ -377,7 +392,14 @@ First release.
 - Windows installer (Inno Setup) and a portable executable, built and published by CI on version tags.
 - Version number shown in the tray menu, tray tooltip, search bar and file properties.
 
-[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.17.8...HEAD
+[Unreleased]: https://github.com/enricoottavoita/lisdir/compare/v0.18.7...HEAD
+[0.18.7]: https://github.com/enricoottavoita/lisdir/compare/v0.18.6...v0.18.7
+[0.18.6]: https://github.com/enricoottavoita/lisdir/compare/v0.18.5...v0.18.6
+[0.18.5]: https://github.com/enricoottavoita/lisdir/compare/v0.18.4...v0.18.5
+[0.18.4]: https://github.com/enricoottavoita/lisdir/compare/v0.18.2...v0.18.4
+[0.18.2]: https://github.com/enricoottavoita/lisdir/compare/v0.18.1...v0.18.2
+[0.18.1]: https://github.com/enricoottavoita/lisdir/compare/v0.18.0...v0.18.1
+[0.18.0]: https://github.com/enricoottavoita/lisdir/compare/v0.17.8...v0.18.0
 [0.17.8]: https://github.com/enricoottavoita/lisdir/compare/v0.17.6...v0.17.8
 [0.17.6]: https://github.com/enricoottavoita/lisdir/compare/v0.17.5...v0.17.6
 [0.17.5]: https://github.com/enricoottavoita/lisdir/compare/v0.17.3...v0.17.5
