@@ -10,6 +10,13 @@ when releasing.
 
 ## [Unreleased]
 
+## [0.18.8] - 2026-11-20
+
+### Changed
+- Internal only, nothing you can see: `engine.rs` is split into one file per job (`src-tauri/src/engine/`), the text
+  formatting and the thread-to-window hand-off shared by the windows have their own files, and the folder rules use a
+  `Verdict` type instead of three numbers.
+
 ## [0.18.7] - 2026-11-19
 
 ### Fixed

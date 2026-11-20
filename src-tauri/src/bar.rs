@@ -1,7 +1,7 @@
 //! The search bar: a borderless window with a native text box, and the list, action menu and preview drawn by `gfx`.
 //! Everything here runs on the main thread; slow work (search, icons, previews, status) runs on other threads and comes
 //! back as a posted message carrying a boxed value.
-use crate::{actions, engine::wide, gfx::{self, Canvas, Theme}, icons, peer, service::Hit, t, tray, typesearch};
+use crate::{actions, engine::wide, fmt, handoff, gfx::{self, Canvas, Theme}, icons, peer, service::Hit, t, tray, typesearch};
 use std::{
     collections::HashMap,
     ptr::{null, null_mut},
@@ -114,69 +114,12 @@ pub fn hwnd() -> HWND {
 
 /// Hand a value from a worker thread to the main thread.
 fn send<T: Send>(msg: u32, value: T) {
-    unsafe { PostMessageW(hwnd(), msg, 0, Box::into_raw(Box::new(value)) as isize) };
-}
-
-unsafe fn recv<T>(l: LPARAM) -> T {
-    *Box::from_raw(l as *mut T)
+    handoff::post(hwnd() as usize, msg, value);
 }
 
 /// Open the bar from any thread, without waiting for it.
 pub fn request_show() {
     unsafe { PostMessageW(hwnd(), WM_SHOW, 0, 0) };
-}
-
-/// 1536 -> "1.5 KB". Binary units, like Explorer.
-pub fn fmt_size(n: u64) -> String {
-    let (mut v, mut i) = (n as f64, 0);
-    while v >= 1024.0 && i < 4 {
-        v /= 1024.0;
-        i += 1;
-    }
-    let unit = ["B", "KB", "MB", "GB", "TB"][i];
-    if i > 0 && v < 10.0 { format!("{v:.1} {unit}") } else { format!("{} {unit}", v.round()) }
-}
-
-/// 1234567 -> "1,234,567" or "1.234.567".
-pub fn fmt_count(n: usize, sep: char) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push(sep);
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// Char positions (as in `Hit::hl`) to runs of UTF-16 units.
-pub fn marks(name: &str, hl: &[usize]) -> Vec<(u32, u32)> {
-    let (mut out, mut at): (Vec<(u32, u32)>, u32) = (vec![], 0);
-    for (i, c) in name.chars().enumerate() {
-        let n = c.len_utf16() as u32;
-        if hl.contains(&i) {
-            match out.last_mut() {
-                Some((start, len)) if *start + *len == at => *len += n,
-                _ => out.push((at, n)),
-            }
-        }
-        at += n;
-    }
-    out
-}
-
-/// Where the word before `at` starts, for Ctrl+Backspace (the text box has no such key of its own).
-pub fn word_start(text: &[u16], at: usize) -> usize {
-    let space = |i: usize| char::from_u32(text[i] as u32).is_some_and(char::is_whitespace);
-    let mut i = at;
-    while i > 0 && space(i - 1) {
-        i -= 1;
-    }
-    while i > 0 && !space(i - 1) {
-        i -= 1;
-    }
-    i
 }
 
 /// The window's size in device-independent pixels.
@@ -507,7 +450,7 @@ pub unsafe fn key(m: &MSG) -> bool {
         }
         (_, VK_BACK) if ctrl => {
             if from == to {
-                SendMessageW(s.edit, EM_SETSEL, word_start(&text, to as usize), to as isize);
+                SendMessageW(s.edit, EM_SETSEL, fmt::word_start(&text, to as usize), to as isize);
             }
             SendMessageW(s.edit, EM_REPLACESEL, 1, wide("").as_ptr() as isize);
             return true;
@@ -555,13 +498,13 @@ unsafe fn paint(s: &mut Bar) {
         }
         let mut right = x + row_w - 12.0;
         if h.size > 0 {
-            right -= c.text_right(&fmt_size(h.size), 12.0, (right - 90.0, y + 16.0, 90.0, 16.0), theme.dim) + 10.0;
+            right -= c.text_right(&fmt::size(h.size), 12.0, (right - 90.0, y + 16.0, 90.0, 16.0), theme.dim) + 10.0;
         }
         if h.pinned {
             right -= c.text_right("📌", 12.0, (right - 24.0, y + 16.0, 24.0, 16.0), theme.dim) + 10.0;
         }
         let (tx, tw) = (x + 46.0, right - x - 46.0);
-        c.text_marked(&h.name, 15.0, (tx, y + 6.0, tw, 20.0), if hist { theme.dim } else { theme.fg }, &marks(&h.name, &h.hl), theme.hl);
+        c.text_marked(&h.name, 15.0, (tx, y + 6.0, tw, 20.0), if hist { theme.dim } else { theme.fg }, &fmt::marks(&h.name, &h.hl), theme.hl);
         let path = if h.app { t("Application", "Applicazione").to_string() } else if h.peer.is_empty() { h.path.clone() } else { format!("🖥 {} · {}", h.peer, h.path) };
         c.text(&path, 12.0, false, (tx, y + 26.0, tw, 16.0), theme.dim);
     }
@@ -674,7 +617,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
     let at = || ((l & 0xffff) as i16 as f32 / s.scale, (l >> 16 & 0xffff) as i16 as f32 / s.scale);
     match msg {
         WM_RESULT => {
-            let (seq, hits): (u64, Vec<Hit>) = recv(l);
+            let (seq, hits): (u64, Vec<Hit>) = handoff::take(l);
             if seq == s.seq {
                 s.local = Some(hits);
                 let stay = s.stay;
@@ -682,7 +625,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             }
         }
         WM_REMOTE => {
-            let (seq, q, got): (u64, String, Vec<Hit>) = recv(l);
+            let (seq, q, got): (u64, String, Vec<Hit>) = handoff::take(l);
             if seq == s.seq {
                 (s.remote, s.remote_q) = (got.clone(), Some(q));
                 if !got.is_empty() || !s.more.is_empty() {
@@ -694,7 +637,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             }
         }
         WM_ICON => {
-            let (key, px): (String, Option<icons::Pixels>) = recv(l);
+            let (key, px): (String, Option<icons::Pixels>) = handoff::take(l);
             let made = px.and_then(|(iw, ih, mut bgra)| {
                 let c = s.canvas.as_ref()?;
                 let normal = c.bitmap(iw, ih, &bgra)?;
@@ -710,7 +653,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             }
         }
         WM_PREVIEW => {
-            let (path, text, image): (String, Option<String>, Option<icons::Pixels>) = recv(l);
+            let (path, text, image): (String, Option<String>, Option<icons::Pixels>) = handoff::take(l);
             if s.pv_path.as_ref() == Some(&path) {
                 ShowWindow(s.pv_edit, SW_HIDE);
                 s.pv_image = None;
@@ -724,15 +667,13 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             }
         }
         WM_STATUS => {
-            let (busy, n, up): (bool, usize, bool) = recv(l);
+            let (busy, n, up): (bool, usize, bool) = handoff::take(l);
             s.status = if !up {
                 t("Index service not running (tray menu → Install index service)", "Servizio di indicizzazione non attivo (menu icona → Installa servizio di indicizzazione)").to_string()
             } else if busy {
                 t("Indexing…", "Indicizzazione…").to_string()
-            } else if crate::italian() {
-                format!("{} elementi", fmt_count(n, '.'))
             } else {
-                format!("{} items", fmt_count(n, ','))
+                format!("{} {}", fmt::grouped(n), t("items", "elementi"))
             };
             repaint(s);
             if IsWindowVisible(h) != 0 {
@@ -915,38 +856,6 @@ pub fn create() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sizes_like_explorer() {
-        assert_eq!(fmt_size(512), "512 B");
-        assert_eq!(fmt_size(1536), "1.5 KB");
-        assert_eq!(fmt_size(20 * 1024), "20 KB");
-        assert_eq!(fmt_size(3 << 30), "3.0 GB");
-    }
-
-    #[test]
-    fn counts_have_separators() {
-        assert_eq!(fmt_count(7, ','), "7");
-        assert_eq!(fmt_count(1234, '.'), "1.234");
-        assert_eq!(fmt_count(1234567, ','), "1,234,567");
-    }
-
-    #[test]
-    fn highlights_become_utf16_runs() {
-        assert_eq!(marks("abcd", &[1, 2]), vec![(1, 2)]);
-        assert_eq!(marks("😀ab", &[1, 2]), vec![(2, 2)]); // the emoji is two units, one position
-        assert_eq!(marks("a😀b", &[0, 1, 2]), vec![(0, 4)]);
-        assert_eq!(marks("abc", &[0, 2]), vec![(0, 1), (2, 1)]);
-    }
-
-    #[test]
-    fn ctrl_backspace_takes_a_word() {
-        let t: Vec<u16> = "foo bar  ".encode_utf16().collect();
-        assert_eq!(word_start(&t, 9), 4);
-        assert_eq!(word_start(&t, 7), 4);
-        assert_eq!(word_start(&t, 3), 0);
-        assert_eq!(word_start(&t, 0), 0);
-    }
 
     #[test]
     fn keys_map_to_actions() {

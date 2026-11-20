@@ -1,7 +1,7 @@
 //! The search window: a normal window that stays open, with the results in columns that sort when you click their
 //! titles. It is made when you open it and gone when you close it, so it costs nothing while it is not on screen.
 //! Like the bar, it runs on the main thread and gets slow work back as posted messages carrying a boxed value.
-use crate::{bar, engine::wide, gfx::{self, Canvas, Theme}, icons, peer, query::Clock, service::Hit, t};
+use crate::{bar, engine::wide, fmt, handoff, gfx::{self, Canvas, Theme}, icons, peer, query::Clock, service::Hit, t};
 use std::{
     collections::{HashMap, HashSet},
     ptr::{null, null_mut},
@@ -93,18 +93,6 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 fn cur() -> Option<&'static mut Win> {
     // ponytail: one mutable global used only on the main thread, like the bar's
     unsafe { WIN.load(SeqCst).as_mut() }
-}
-
-/// Hand a value to the window from a worker thread. If the window is gone by now, the value is dropped.
-fn post<T: Send>(hwnd: usize, msg: u32, value: T) {
-    let p = Box::into_raw(Box::new(value));
-    if unsafe { PostMessageW(hwnd as HWND, msg, 0, p as isize) } == 0 {
-        drop(unsafe { Box::from_raw(p) });
-    }
-}
-
-unsafe fn recv<T>(l: LPARAM) -> T {
-    *Box::from_raw(l as *mut T)
 }
 
 // ---------------------------------------------------------------- sorting
@@ -292,7 +280,7 @@ unsafe fn run(s: &mut Win) {
             tokio::time::sleep(Duration::from_millis(60)).await;
             if SEQ.load(SeqCst) == seq {
                 let got = crate::remote_search(text.clone()).await;
-                post(h, WM_REMOTE, (seq, got));
+                handoff::post(h, WM_REMOTE, (seq, got));
             }
         });
     }
@@ -387,7 +375,7 @@ pub unsafe fn key(m: &MSG) -> bool {
         VK_BACK if ctrl => {
             let text: Vec<u16> = gfx::text_of(s.edit).encode_utf16().collect();
             if from == to {
-                SendMessageW(s.edit, EM_SETSEL, bar::word_start(&text, to as usize), to as isize);
+                SendMessageW(s.edit, EM_SETSEL, fmt::word_start(&text, to as usize), to as isize);
             }
             SendMessageW(s.edit, EM_REPLACESEL, 1, wide("").as_ptr() as isize);
             return true;
@@ -420,7 +408,7 @@ unsafe fn paint(s: &mut Win) {
             let _ = s.icon_jobs.send((key, path));
         }
     }
-    let (n, it) = (fmt(s.rows.len()), crate::italian());
+    let (n, it) = (fmt::grouped(s.rows.len()), crate::italian());
     let picked = s.marked.len();
     let mut status = if gfx::text_of(s.edit).trim().is_empty() {
         t("Type to search", "Scrivi per cercare").to_string()
@@ -480,10 +468,10 @@ unsafe fn paint(s: &mut Win) {
             cv.image(bmp, (c[0], y + 6.0, 18.0, 18.0), 1.0);
         }
         let name = (c[0] + 26.0, y + 5.0, c[1] - 26.0, 20.0);
-        cv.text_marked(&hit.name, 14.0, name, theme.fg, &bar::marks(&hit.name, &hit.hl), theme.hl);
+        cv.text_marked(&hit.name, 14.0, name, theme.fg, &fmt::marks(&hit.name, &hit.hl), theme.hl);
         cv.text(&folder_of(hit), 12.0, false, (c[2], y + 7.0, c[3], 16.0), theme.dim);
         if hit.size > 0 {
-            cv.text_right(&bar::fmt_size(hit.size), 12.0, (c[4], y + 7.0, SIZE_W, 16.0), theme.dim);
+            cv.text_right(&fmt::size(hit.size), 12.0, (c[4], y + 7.0, SIZE_W, 16.0), theme.dim);
         }
         cv.text(&clock.stamp(hit.time), 12.0, false, (c[5], y + 7.0, TIME_W, 16.0), theme.dim);
     }
@@ -508,12 +496,6 @@ unsafe fn paint(s: &mut Win) {
         resize(s);
         repaint(s);
     }
-}
-
-/// 1234 -> "1,234" or "1.234".
-fn fmt(n: usize) -> String {
-    let sep = if crate::italian() { '.' } else { ',' };
-    bar::fmt_count(n, sep)
 }
 
 unsafe fn resize(s: &mut Win) {
@@ -583,21 +565,21 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
     let at = || ((l & 0xffff) as i16 as f32 / s.scale, (l >> 16 & 0xffff) as i16 as f32 / s.scale);
     match msg {
         WM_RESULT => {
-            let (seq, hits): (u64, Vec<Hit>) = recv(l);
+            let (seq, hits): (u64, Vec<Hit>) = handoff::take(l);
             if seq == s.seq {
                 s.local = hits;
                 rebuild(s, false);
             }
         }
         WM_REMOTE => {
-            let (seq, got): (u64, Vec<Hit>) = recv(l);
+            let (seq, got): (u64, Vec<Hit>) = handoff::take(l);
             if seq == s.seq && !got.is_empty() {
                 s.more = got;
                 rebuild(s, true);
             }
         }
         WM_ICON => {
-            let (key, px): (String, Option<icons::Pixels>) = recv(l);
+            let (key, px): (String, Option<icons::Pixels>) = handoff::take(l);
             let made = px.and_then(|(iw, ih, bgra)| s.canvas.as_ref()?.bitmap(iw, ih, &bgra));
             if made.is_some() {
                 s.icons.insert(key, made);
@@ -822,12 +804,12 @@ pub fn open(query: &str) {
                 while let Ok(newer) = asked.try_recv() {
                     job = newer; // only the latest text matters
                 }
-                post(handle, WM_RESULT, (job.0, crate::search_n(&job.1, LIMIT)));
+                handoff::post(handle, WM_RESULT, (job.0, crate::search_n(&job.1, LIMIT)));
             }
         });
         std::thread::spawn(move || {
             while let Ok((key, path)) = wanted.recv() {
-                post(handle, WM_ICON, (key.clone(), icons::icon_image(&key, &path)));
+                handoff::post(handle, WM_ICON, (key.clone(), icons::icon_image(&key, &path)));
             }
         });
         fonts(s);

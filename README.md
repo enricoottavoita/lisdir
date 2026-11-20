@@ -110,7 +110,7 @@ folders itself, because only your user session has your credentials and drive ma
 
 | File | Role |
 |---|---|
-| `src-tauri/src/engine.rs` | The index (a flat list of entries, with each name's letters and its lowercased name kept apart so a search reads little), MFT enumeration, USN journal tailing, cache and change log, directory walker, fuzzy matcher, parallel search |
+| `src-tauri/src/engine/` | The engine, one file per job: `index.rs` (the index: a flat list of entries, with each name's letters kept apart so a search reads little), `usn.rs` (MFT enumeration, file records, USN journal), `apply.rs` (the rules, folder sizes, applying changes), `cache.rs` (snapshot and change log), `drives.rs` (which disks exist and how they are indexed), `walk.rs` (directory walker and watcher for network folders), `search.rs` (fuzzy matcher, parallel search) |
 | `src-tauri/src/mft.rs` | Reads modified time and size out of a raw NTFS file record |
 | `src-tauri/src/service.rs` | Elevated helper, pipe server/client, scheduled-task install |
 | `src-tauri/src/query.rs` | The search syntax: parsing `ext:`, `date:`, quotes, `docs\`, ... |
@@ -127,6 +127,8 @@ folders itself, because only your user session has your credentials and drive ma
 | `src-tauri/src/bar.rs` | The search bar |
 | `src-tauri/src/prefs.rs` | The settings window |
 | `src-tauri/src/tray.rs` | The tray icon and its menu, the global shortcut |
+| `src-tauri/src/fmt.rs` | Sizes, counts and highlights as text, shared by the windows |
+| `src-tauri/src/handoff.rs` | Hands a value from a worker thread to a window as a posted message |
 | `src-tauri/src/gfx.rs` | The colour themes and the Direct2D drawing shared by the windows |
 
 ## Build
@@ -254,7 +256,7 @@ The full list, in priority order, is in [TODO.md](TODO.md). In short:
 
 Issues and pull requests are welcome. Run `cargo test` before sending a change, and note user-visible changes
 under **Unreleased** in [CHANGELOG.md](CHANGELOG.md). Keep the engine free of UI
-concerns: `engine.rs` should stay testable without a window or elevation.
+concerns: `engine/` should stay testable without a window or elevation.
 
 ## License
 

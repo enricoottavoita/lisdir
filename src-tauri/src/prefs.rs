@@ -1,6 +1,6 @@
 //! The settings window: native controls on a tall page that scrolls inside the window. Every control has an id and is
 //! found through it; `layout` places whatever is visible from top to bottom, and runs again when the content changes.
-use crate::{actions, bar, engine::{self, wide}, gfx::{self, Theme}, peer, settings::{key_name, Settings}, t};
+use crate::{actions, bar, engine::{self, wide}, gfx::{self, Theme}, handoff, peer, settings::{key_name, Settings}, t};
 use std::{
     mem::{size_of, zeroed},
     ptr::{null, null_mut},
@@ -461,7 +461,7 @@ unsafe fn pair_with(s: &mut Prefs) {
     layout(s);
     peer::rt().spawn(async move {
         let answer = peer::pair(code).await;
-        PostMessageW(HANDLE.load(SeqCst), WM_PAIRED, 0, Box::into_raw(Box::new(answer)) as isize);
+        handoff::post(HANDLE.load(SeqCst) as usize, WM_PAIRED, answer);
     });
 }
 
@@ -729,7 +729,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
         }
         WM_TIMER => tick(s),
         WM_PAIRED => {
-            let answer = *Box::from_raw(l as *mut Result<String, String>);
+            let answer: Result<String, String> = handoff::take(l);
             s.busy = false;
             match answer {
                 Ok(name) => {
